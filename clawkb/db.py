@@ -254,6 +254,13 @@ def get_article(conn: sqlite3.Connection, article_id: int):
 def delete_article_row(conn: sqlite3.Connection, article_id: int) -> None:
     conn.execute("DELETE FROM articles WHERE id=?", (article_id,))
 
+
+def get_article_by_source(conn: sqlite3.Connection, source_url: str):
+    return conn.execute(
+        "SELECT * FROM articles WHERE source_url=? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1",
+        (source_url,),
+    ).fetchone()
+
 def upsert_fts(conn: sqlite3.Connection, article_id: int, title: str, tags: str, summary: str) -> None:
     conn.execute("DELETE FROM articles_fts WHERE rowid=?", (article_id,))
     conn.execute(

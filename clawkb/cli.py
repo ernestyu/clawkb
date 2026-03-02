@@ -116,17 +116,39 @@ def cmd_ingest(args) -> int:
     try:
         conn = _open_for_command(paths["db"], need_fts=True, need_vec=True, args=args)
         conn.execute("BEGIN")
-        new_id = dbmod.insert_article(
-            conn,
-            title=title,
-            source_url=source_url,
-            tags=tags,
-            summary=summary,
-            category=category,
-            local_file_path="",
-            priority=priority,
-            created_at=created_at,
-        )
+
+        # If this URL already exists (non-Local), and --update-existing is set,
+        # update the existing record instead of inserting a new one.
+        existing_id: Optional[int] = None
+        if getattr(args, "update_existing", False) and args.url:
+            row = dbmod.get_article_by_source(conn, source_url)
+            if row is not None:
+                existing_id = int(row["id"])
+
+        if existing_id is not None:
+            # Update path
+            dbmod.update_article_fields(
+                conn,
+                existing_id,
+                title=title,
+                summary=summary,
+                tags=tags,
+                category=category,
+                priority=priority,
+            )
+            new_id = existing_id
+        else:
+            new_id = dbmod.insert_article(
+                conn,
+                title=title,
+                source_url=source_url,
+                tags=tags,
+                summary=summary,
+                category=category,
+                local_file_path="",
+                priority=priority,
+                created_at=created_at,
+            )
 
         md_path = article_abspath(paths["articles_dir"], new_id, title)
         md_content = format_markdown_with_metadata(

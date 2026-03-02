@@ -173,12 +173,19 @@ def cmd_ingest(args) -> int:
 
         embed_on = embedding_enabled()
         if embed_on and summary:
+            # Only attempt vec upsert when the vec table actually exists.
             try:
-                emb = get_embedding(summary)
-                blob = floats_to_f32_blob(emb)
-                dbmod.upsert_vec(conn, new_id, blob)
-            except Exception as e:
-                sys.stderr.write(f"WARNING: vec upsert failed: {e}\n")
+                if dbmod.vec_table_exists(conn):
+                    try:
+                        emb = get_embedding(summary)
+                        blob = floats_to_f32_blob(emb)
+                        dbmod.upsert_vec(conn, new_id, blob)
+                    except Exception as e:
+                        sys.stderr.write(f"WARNING: vec upsert failed: {e}\n")
+                else:
+                    embed_on = False
+            except Exception:
+                embed_on = False
 
         conn.commit()
 

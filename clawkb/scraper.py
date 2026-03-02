@@ -46,14 +46,42 @@ def scrape_url(url: str, *, scrape_cmd: Optional[str] = None, timeout: int = 120
         raise RuntimeError(f"Scraper failed (code={p.returncode}): {p.stderr.strip()[:500]}")
 
     out = p.stdout
-    title = None
-    body_lines = []
-    for line in out.splitlines():
-        if line.startswith("Title:"):
-            title = line[len("Title:"):].strip()
-            continue
-        body_lines.append(line)
-    body = "\n".join(body_lines).strip()
+    title: Optional[str] = None
+
+    # Prefer new-style output with explicit METADATA / MARKDOWN sections.
+    lines = out.splitlines()
+    meta_idx = None
+    md_idx = None
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s == "--- METADATA ---" and meta_idx is None:
+            meta_idx = i
+        elif s == "--- MARKDOWN ---" and md_idx is None:
+            md_idx = i
+
+    body: str
+    if md_idx is not None:
+        # New format: optional METADATA block, then MARKDOWN block.
+        meta_lines = []
+        if meta_idx is not None and meta_idx < md_idx:
+            meta_lines = lines[meta_idx + 1 : md_idx]
+        # Extract title from metadata if present.
+        for ml in meta_lines:
+            mls = ml.strip()
+            if mls.lower().startswith("title:"):
+                title = mls.split(":", 1)[1].strip()
+                break
+        body = "\n".join(lines[md_idx + 1 :]).strip()
+    else:
+        # Legacy format: optional "Title:" line followed by markdown body.
+        body_lines = []
+        for line in lines:
+            if line.startswith("Title:"):
+                title = line[len("Title:") :].strip()
+                continue
+            body_lines.append(line)
+        body = "\n".join(body_lines).strip()
+
     if not body:
         body = out.strip()
     return title, body

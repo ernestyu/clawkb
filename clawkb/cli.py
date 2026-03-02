@@ -515,21 +515,37 @@ def cmd_delete(args) -> int:
             dbmod.delete_article_row(conn, aid)
             p = (row["local_file_path"] or "").strip()
             if p and os.path.exists(p):
-                if args.backup_file and not args.remove_file:
-                    # Rename to .bak_deleted_<timestamp>, to be cleaned by maintenance later.
+                if args.remove_file:
+                    # Explicitly requested immediate removal.
+                    try:
+                        os.remove(p)
+                    except Exception as e:
+                        sys.stderr.write(f"WARNING: remove file failed: {e}\n")
+                else:
+                    # Default: backup-style deletion.
                     ts_suffix = now_iso_z().replace(":", "").replace("-", "").replace("T", "").replace("Z", "")
                     bak_path = f"{p}.bak_deleted_{ts_suffix}"
                     try:
                         os.rename(p, bak_path)
                     except Exception as e:
                         sys.stderr.write(f"WARNING: backup rename failed: {e}\n")
-                elif args.remove_file:
-                    try:
-                        os.remove(p)
-                    except Exception as e:
-                        sys.stderr.write(f"WARNING: remove file failed: {e}\n")
         else:
-            dbmod.update_article_fields(conn, aid, deleted_at=now_iso_z())
+            # Soft delete: mark deleted_at and move file to a .bak_deleted_ path.
+            p = (row["local_file_path"] or "").strip()
+            ts_suffix = now_iso_z().replace(":", "").replace("-", "").replace("T", "").replace("Z", "")
+            bak_path = None
+            if p:
+                bak_path = f"{p}.bak_deleted_{ts_suffix}"
+                if os.path.exists(p):
+                    try:
+                        os.rename(p, bak_path)
+                    except Exception as e:
+                        sys.stderr.write(f"WARNING: backup rename failed: {e}\n")
+                    # Even if rename fails, we still proceed with deleted_at flag.
+            if bak_path:
+                dbmod.update_article_fields(conn, aid, deleted_at=now_iso_z(), local_file_path=bak_path)
+            else:
+                dbmod.update_article_fields(conn, aid, deleted_at=now_iso_z())
             try:
                 dbmod.delete_fts(conn, aid)
             except Exception:
@@ -799,8 +815,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_flags(sp)
     sp.add_argument("--id", required=True, help="Article id")
     sp.add_argument("--hard", action="store_true", help="Hard delete (remove db row)")
-    sp.add_argument("--remove-file", action="store_true", help="When hard delete, also remove markdown file")
-    sp.add_argument("--backup-file", action="store_true", help="When hard delete, rename markdown to .bak_deleted_<timestamp> instead of removing")
+    sp.add_argument("--remove-file", action="store_true", help="When hard delete, permanently remove markdown file (no backup)")
     sp.set_defaults(func=cmd_delete)
 
     # reindex
@@ -818,7 +833,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("maintenance", help="Maintenance: prune orphan/backup files and check paths")
     _add_common_flags(sp)
     sp.add_argument("action", choices=["prune", "gc"], help="Maintenance action (prune=gc)")
-    sp.add_argument("--days", type=int, default=7, help="Backup retention in days (for .bak_ files)")
+    sp.add_argument("--days", type=int, default=3, help="Backup retention in days (for .bak_ files)")
     sp.add_argument("--dry-run", action="store_true", help="Dry run: only report, do not delete")
     sp.set_defaults(func=cmd_maintenance)
 

@@ -1,5 +1,7 @@
 # Clawkb
 
+[中文文档](./README_zh.md)
+
 A local knowledge-base CLI for [OpenClaw](https://github.com/openclaw/openclaw).
 
 Clawkb stores your notes and scraped articles in **SQLite + FTS5 + sqlite-vec** and exposes a small CLI for:

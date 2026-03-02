@@ -54,6 +54,9 @@ CREATE INDEX IF NOT EXISTS idx_articles_modified_at ON articles(modified_at);
 CREATE INDEX IF NOT EXISTS idx_articles_deleted_at  ON articles(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_articles_category    ON articles(category);
 CREATE INDEX IF NOT EXISTS idx_articles_priority    ON articles(priority);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_articles_source_url_unique
+  ON articles(source_url)
+  WHERE source_url IS NOT NULL AND trim(source_url) != '' AND source_url != 'Local';
 """
 
 FTS_SCHEMA_SIMPLE = """

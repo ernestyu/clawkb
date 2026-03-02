@@ -113,6 +113,7 @@ def cmd_ingest(args) -> int:
     created_at = now_iso_z()
 
     conn = None
+    old_path: Optional[str] = None
     try:
         conn = _open_for_command(paths["db"], need_fts=True, need_vec=True, args=args)
         conn.execute("BEGIN")
@@ -124,11 +125,10 @@ def cmd_ingest(args) -> int:
             row = dbmod.get_article_by_source(conn, source_url)
             if row is not None:
                 existing_id = int(row["id"])
+                old_path = (row["local_file_path"] or "").strip() or None
 
         if existing_id is not None:
-            # Update path: we'll overwrite metadata but keep the same id.
-            # The markdown file will be rewritten below. Old file name may
-            # change due to new title; we do not delete the old file here.
+            # Update path: overwrite metadata but keep the same id.
             dbmod.update_article_fields(
                 conn,
                 existing_id,
@@ -166,6 +166,18 @@ def cmd_ingest(args) -> int:
         write_markdown(md_path, md_content)
 
         dbmod.update_article_fields(conn, new_id, local_file_path=md_path)
+
+        # If we updated an existing article and the file path changed,
+        # rename the old file to a .bak_<timestamp> suffix so it can be
+        # cleaned up safely by external scripts.
+        if existing_id is not None and old_path and old_path != md_path and os.path.exists(old_path):
+            ts_suffix = now_iso_z().replace(":", "").replace("-", "").replace("T", "").replace("Z", "")
+            bak_path = f"{old_path}.bak_{ts_suffix}"
+            try:
+                os.rename(old_path, bak_path)
+            except Exception:
+                # Best-effort: if rename fails, we just leave the old file.
+                pass
 
         # Index sync
         try:

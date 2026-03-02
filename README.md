@@ -1,6 +1,6 @@
 # Clawkb
 
-[中文文档](./README_zh.md)
+**Languages:** English | [中文说明](README_zh.md)
 
 A local knowledge-base CLI for [OpenClaw](https://github.com/openclaw/openclaw).
 

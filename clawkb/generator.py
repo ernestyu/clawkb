@@ -23,6 +23,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .utils import truncate_text, comma_join_tags, extract_keywords_light
 
+# Optional Chinese tokenizer/keywords: jieba
+try:  # pragma: no cover - optional dependency
+    import jieba  # type: ignore
+    import jieba.analyse as _jieba_analyse  # type: ignore
+    _JIEBA_AVAILABLE = True
+except Exception:  # ImportError or others
+    _jieba_analyse = None
+    _JIEBA_AVAILABLE = False
+
 def _chat_url(base_url: str) -> str:
     base = base_url.rstrip("/")
     if base.endswith("/chat/completions"):
@@ -104,14 +113,33 @@ def _heuristic_summary(content: str, max_chars: int = 800) -> str:
     return truncate_text(c, max_chars=max_chars)
 
 def _heuristic_tags(content: str, max_tags: int = 8, *, snippet_chars: int = 1000) -> List[str]:
-    # Focus on the first N chars to reduce noise from long tails.
+    """Heuristic tag extraction.
+
+    Preference order:
+    - If jieba is available, use jieba.analyse.extract_tags on the first
+      `snippet_chars` characters.
+    - Otherwise, fall back to extract_keywords_light on the same snippet.
+
+    Both paths apply simple filters to drop numeric/meta tokens.
+    """
+
     snippet = (content or "")[:snippet_chars]
-    kws = extract_keywords_light(snippet, max_k=max_tags * 2)
+
+    candidates: List[str]
+    if _JIEBA_AVAILABLE:
+        # jieba.analyse returns tags sorted by TF-IDF weight.
+        try:
+            candidates = list(_jieba_analyse.extract_tags(snippet, topK=max_tags * 3))
+        except Exception:
+            candidates = extract_keywords_light(snippet, max_k=max_tags * 3)
+    else:
+        candidates = extract_keywords_light(snippet, max_k=max_tags * 3)
+
     # Simple blacklist for obvious meta tokens
     blacklist = {"字数", "阅读", "阅读大约需", "分钟", "min", "mins"}
-    out = []
+    out: List[str] = []
     seen = set()
-    for k in kws:
+    for k in candidates:
         k = k.strip()
         if not k:
             continue

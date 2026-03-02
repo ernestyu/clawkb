@@ -112,12 +112,12 @@ def _heuristic_summary(content: str, max_chars: int = 800) -> str:
     # Simple: take first N chars, but try to preserve paragraph boundary
     return truncate_text(c, max_chars=max_chars)
 
-def _heuristic_tags(content: str, max_tags: int = 8, *, snippet_chars: int = 1000) -> List[str]:
+def _heuristic_tags(content: str, max_tags: int = 8, *, snippet_chars: int = 800) -> List[str]:
     """Heuristic tag extraction.
 
     Preference order:
-    - If jieba is available, use jieba.analyse.extract_tags on the first
-      `snippet_chars` characters.
+    - If jieba is available, use jieba.analyse.textrank on the first
+      `snippet_chars` characters (falling back to TF-IDF on error).
     - Otherwise, fall back to extract_keywords_light on the same snippet.
 
     Both paths apply simple filters to drop numeric/meta tokens.
@@ -127,11 +127,14 @@ def _heuristic_tags(content: str, max_tags: int = 8, *, snippet_chars: int = 100
 
     candidates: List[str]
     if _JIEBA_AVAILABLE:
-        # jieba.analyse returns tags sorted by TF-IDF weight.
+        # Prefer TextRank for better global importance; fall back to TF-IDF on error.
         try:
-            candidates = list(_jieba_analyse.extract_tags(snippet, topK=max_tags * 3))
+            candidates = list(_jieba_analyse.textrank(snippet, topK=max_tags * 3))
         except Exception:
-            candidates = extract_keywords_light(snippet, max_k=max_tags * 3)
+            try:
+                candidates = list(_jieba_analyse.extract_tags(snippet, topK=max_tags * 3))
+            except Exception:
+                candidates = extract_keywords_light(snippet, max_k=max_tags * 3)
     else:
         candidates = extract_keywords_light(snippet, max_k=max_tags * 3)
 

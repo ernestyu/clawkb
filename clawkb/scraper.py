@@ -16,6 +16,7 @@ Recommended output format:
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from typing import Optional, Tuple
 
@@ -23,19 +24,17 @@ def scrape_url(url: str, *, scrape_cmd: Optional[str] = None, timeout: int = 120
     cmd = scrape_cmd or os.environ.get("CLAWKB_SCRAPE_CMD")
     if not cmd:
         raise RuntimeError("URL ingest requires a scraper. Set --scrape-cmd or env CLAWKB_SCRAPE_CMD.")
-    # If cmd is a string, run via shell; to be safer, allow users to pass a template with {url}.
+
+    # Build argv safely. We avoid shell=True by default to reduce quoting issues.
     if "{url}" in cmd:
-        full_cmd = cmd.format(url=url)
-        shell = True
-        args = full_cmd
+        formatted = cmd.format(url=url)
+        argv = shlex.split(formatted)
     else:
-        # Split by whitespace minimally; users can still use {url} to avoid issues.
-        shell = True
-        args = f"{cmd} \"{url}\""
+        argv = shlex.split(cmd) + [url]
 
     p = subprocess.run(
-        args,
-        shell=shell,
+        argv,
+        shell=False,
         capture_output=True,
         text=True,
         encoding="utf-8",

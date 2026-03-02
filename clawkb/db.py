@@ -114,6 +114,20 @@ def _fts_table_ok(conn: sqlite3.Connection) -> bool:
     except Exception:
         return False
 
+
+def vec_table_exists(conn: sqlite3.Connection) -> bool:
+    """Return True if articles_vec exists and is readable.
+
+    We use a lightweight SELECT to avoid relying on sqlite_master parsing
+    in multiple places.
+    """
+
+    try:
+        conn.execute("SELECT 1 FROM articles_vec LIMIT 1").fetchone()
+        return True
+    except Exception:
+        return False
+
 def _drop_fts(conn: sqlite3.Connection) -> None:
     try:
         conn.execute("DROP TABLE IF EXISTS articles_fts")

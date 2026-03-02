@@ -294,6 +294,14 @@ def cmd_search(args) -> int:
     try:
         conn = _open_for_command(paths["db"], need_fts=True, need_vec=True, args=args)
 
+        # If DB doesn't have vec table (e.g. first-run or vec disabled),
+        # downgrade to FTS-only behavior even if embedding is configured.
+        try:
+            if not dbmod.vec_table_exists(conn):
+                embed_on = False
+        except Exception:
+            embed_on = False
+
         def _qvec_blob(q: str) -> bytes:
             emb = get_embedding(q)
             return floats_to_f32_blob(emb)

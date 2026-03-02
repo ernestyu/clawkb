@@ -16,12 +16,23 @@ def check(conn, *, embed_on: bool) -> Dict[str, Any]:
     missing = dbmod.count_missing(conn)
     file_missing = dbmod.count_file_missing(conn)
     fts_missing = dbmod.count_fts_missing(conn)
-    vec_missing = dbmod.count_vec_missing(conn) if embed_on else 0
+    # Vec stats are only meaningful if both embedding is configured and vec table exists.
+    vec_missing = 0
+    vec_available = False
+    if embed_on:
+        try:
+            if dbmod.vec_table_exists(conn):
+                vec_missing = dbmod.count_vec_missing(conn)
+                vec_available = True
+        except Exception:
+            vec_missing = 0
+            vec_available = False
     return {
         "missing": missing,
         "file_missing": file_missing,
         "fts_missing": fts_missing,
         "vec_missing": vec_missing,
+        "vec_available": vec_available,
         "embedding_enabled": embed_on,
     }
 

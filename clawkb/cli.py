@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+import datetime as _dt
 from typing import Any, Dict, List, Optional
 
 from . import db as dbmod
@@ -544,6 +546,104 @@ def cmd_delete(args) -> int:
         if conn is not None:
             conn.close()
 
+
+def cmd_maintenance(args) -> int:
+    paths = _resolve_paths(args)
+    articles_dir = paths["articles_dir"]
+    db_path = paths["db"]
+    dry = bool(args.dry_run)
+    days = int(args.days or 7)
+
+    now = _dt.datetime.utcnow()
+    cutoff = now - _dt.timedelta(days=days)
+
+    # 1) Load DB ids
+    conn = None
+    db_ids = set()
+    try:
+        if os.path.exists(db_path):
+            conn = _open_for_command(db_path, need_fts=False, need_vec=False, args=args)
+            for row in conn.execute("SELECT id FROM articles"):
+                db_ids.add(int(row["id"]))
+    except Exception as e:
+        sys.stderr.write(f"WARNING: maintenance: failed to read db ids: {e}\n")
+    finally:
+        if conn is not None:
+            conn.close()
+
+    orphan_files = []
+    bak_files = []
+    broken_records = []
+
+    # 2) Scan articles_dir
+    if os.path.isdir(articles_dir):
+        for root, _, files in os.walk(articles_dir):
+            for name in files:
+                path = os.path.join(root, name)
+                rel = os.path.relpath(path, articles_dir)
+                # Detect .bak files
+                m_bak = re.search(r"\.bak_(\d{8,})$", name)
+                if m_bak:
+                    # Parse timestamp roughly as YYYYMMDD...; we only care about date
+                    ts = m_bak.group(1)
+                    try:
+                        dt = _dt.datetime.strptime(ts[:8], "%Y%m%d")
+                        if dt < cutoff:
+                            bak_files.append(path)
+                    except Exception:
+                        # If parse fails, treat as orphan-like candidate
+                        orphan_files.append(path)
+                    continue
+
+                # Normal markdown files: expect leading 6-digit id
+                m_id = re.match(r"^(\d{6})__.*\.md$", name)
+                if m_id:
+                    fid = int(m_id.group(1))
+                    if fid not in db_ids:
+                        orphan_files.append(path)
+                # else: ignore other files
+
+    # 3) Broken records: DB rows pointing to missing files
+    try:
+        if os.path.exists(db_path):
+            conn = _open_for_command(db_path, need_fts=False, need_vec=False, args=args)
+            for row in conn.execute("SELECT id, local_file_path FROM articles"):
+                p = (row["local_file_path"] or "").strip()
+                if p and not os.path.exists(p):
+                    broken_records.append({"id": int(row["id"]), "path": p})
+    except Exception as e:
+        sys.stderr.write(f"WARNING: maintenance: failed to scan broken records: {e}\n")
+    finally:
+        if conn is not None:
+            conn.close()
+
+    # 4) Report
+    result = {
+        "orphans": orphan_files,
+        "bak_to_delete": bak_files,
+        "broken_records": broken_records,
+        "days": days,
+        "dry_run": dry,
+    }
+
+    if dry:
+        _print(result, bool(getattr(args, "json", False)))
+        return 0
+
+    # 5) Apply deletions
+    deleted = []
+    for p in orphan_files + bak_files:
+        try:
+            os.remove(p)
+            deleted.append(p)
+        except Exception as e:
+            sys.stderr.write(f"WARNING: maintenance: failed to delete {p}: {e}\n")
+
+    result["deleted"] = deleted
+    _print(result, bool(getattr(args, "json", False)))
+    return 0
+
+
 def cmd_reindex(args) -> int:
     paths = _resolve_paths(args)
     embed_on = embedding_enabled()
@@ -696,6 +796,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--vec", action="store_true", help="With --rebuild: rebuild vec index (requires embedding enabled)")
     sp.add_argument("--gen-provider", default="openclaw", choices=["openclaw", "llm", "off"], help="Generator provider for fix-missing")
     sp.set_defaults(func=cmd_reindex)
+
+    # maintenance / gc
+    sp = sub.add_parser("maintenance", help="Maintenance: prune orphan/backup files and check paths")
+    _add_common_flags(sp)
+    sp.add_argument("action", choices=["prune", "gc"], help="Maintenance action (prune=gc)")
+    sp.add_argument("--days", type=int, default=7, help="Backup retention in days (for .bak_ files)")
+    sp.add_argument("--dry-run", action="store_true", help="Dry run: only report, do not delete")
+    sp.set_defaults(func=cmd_maintenance)
 
     return p
 

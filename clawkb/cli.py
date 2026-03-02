@@ -17,7 +17,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from . import db as dbmod
-from .utils import now_iso_z, truncate_text, comma_join_tags
+from .utils import now_iso_z, truncate_text, comma_join_tags, resolve_root_paths
 from .storage import (
     ensure_dir,
     article_abspath,
@@ -31,13 +31,23 @@ from .scraper import scrape_url
 from .search import hybrid_search
 from . import reindex as reindex_mod
 
-DEFAULT_ROOT = "/home/node/.openclaw/workspace/clawkb"
+DEFAULT_ROOT = os.environ.get("CLAWKB_ROOT_DEFAULT", "")
+
 
 def _resolve_paths(args) -> Dict[str, str]:
-    root = args.root or os.environ.get("CLAWKB_ROOT") or DEFAULT_ROOT
-    db_path = args.db or os.environ.get("CLAWKB_DB") or os.path.join(root, "clawkb.sqlite3")
-    articles_dir = args.articles_dir or os.environ.get("CLAWKB_ARTICLES_DIR") or os.path.join(root, "articles")
-    return {"root": root, "db": db_path, "articles_dir": articles_dir}
+    """Resolve root/db/articles-dir with clear priority: CLI > env > defaults.
+
+    DEFAULT_ROOT is intentionally kept lightweight; the actual fallback
+    logic lives in utils.resolve_root_paths so it can be reused by other
+    entrypoints if needed.
+    """
+
+    return resolve_root_paths(
+        cli_root=getattr(args, "root", None),
+        cli_db=getattr(args, "db", None),
+        cli_articles_dir=getattr(args, "articles_dir", None),
+        default_root=DEFAULT_ROOT or None,
+    )
 
 def _print(obj: Any, as_json: bool) -> None:
     if as_json:
@@ -504,11 +514,34 @@ def cmd_reindex(args) -> int:
             conn.close()
 
 def _add_common_flags(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--root", default=None, help="Root dir. Default: /home/node/.openclaw/workspace/clawkb or $CLAWKB_ROOT")
-    parser.add_argument("--db", default=None, help="SQLite db path. Default: <root>/clawkb.sqlite3 or $CLAWKB_DB")
-    parser.add_argument("--articles-dir", default=None, help="Articles markdown dir. Default: <root>/articles or $CLAWKB_ARTICLES_DIR")
-    parser.add_argument("--tokenizer-ext", default=None, help="Tokenizer extension path. Default: /usr/local/lib/libsimple.so or $CLAWKB_TOKENIZER_EXT")
-    parser.add_argument("--vec-ext", default=None, help="vec0 extension path. Default: auto-discover or $CLAWKB_VEC_EXT")
+    parser.add_argument(
+        "--root",
+        default=None,
+        help=(
+            "Root dir. Priority: CLI --root > $CLAWKB_ROOT > $CLAWKB_ROOT_FALLBACK > "
+            "<cwd>/clawkb_data."
+        ),
+    )
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="SQLite db path. Priority: CLI --db > $CLAWKB_DB > <root>/clawkb.sqlite3",
+    )
+    parser.add_argument(
+        "--articles-dir",
+        default=None,
+        help="Articles markdown dir. Priority: CLI --articles-dir > $CLAWKB_ARTICLES_DIR > <root>/articles",
+    )
+    parser.add_argument(
+        "--tokenizer-ext",
+        default=None,
+        help="Tokenizer extension path. Default: /usr/local/lib/libsimple.so or $CLAWKB_TOKENIZER_EXT",
+    )
+    parser.add_argument(
+        "--vec-ext",
+        default=None,
+        help="vec0 extension path. Default: auto-discover or $CLAWKB_VEC_EXT",
+    )
     parser.add_argument("--json", action="store_true", help="Output JSON")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
 

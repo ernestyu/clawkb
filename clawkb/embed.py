@@ -14,9 +14,9 @@ from __future__ import annotations
 import os
 import json
 import struct
-import urllib.request
-import urllib.error
-from typing import List, Optional, Tuple
+from typing import List
+
+import httpx
 
 def embedding_enabled() -> bool:
     return bool(os.environ.get("EMBEDDING_MODEL") and os.environ.get("EMBEDDING_BASE_URL") and os.environ.get("EMBEDDING_API_KEY"))
@@ -34,36 +34,42 @@ def _embeddings_url(base_url: str) -> str:
     return base + "/v1/embeddings" if base.startswith("http") else base + "/embeddings"
 
 def get_embedding(text: str, *, timeout: int = 60) -> List[float]:
-    """
-    Call embedding service and return a float list.
+    """Call embedding service and return a float list.
 
-    Raises RuntimeError on failures.
+    Uses httpx with a sane default User-Agent to avoid being trivially
+    blocked by WAF/CDN layers. Raises RuntimeError on failures.
     """
+
     model = os.environ.get("EMBEDDING_MODEL")
     base_url = os.environ.get("EMBEDDING_BASE_URL")
     api_key = os.environ.get("EMBEDDING_API_KEY")
     if not (model and base_url and api_key):
         raise RuntimeError("Embedding is not enabled: missing EMBEDDING_MODEL/BASE_URL/API_KEY")
-    url = _embeddings_url(base_url)
 
-    payload = json.dumps({"model": model, "input": text}).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {api_key}")
+    url = _embeddings_url(base_url)
+    payload = {"model": model, "input": text}
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+        # A realistic UA helps avoid naive 403/1010 style blocks.
+        "User-Agent": os.environ.get(
+            "CLAWKB_HTTP_USER_AGENT",
+            "Mozilla/5.0 (X11; Linux x86_64) Clawkb/1.0",
+        ),
+    }
 
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        err_body = ""
-        try:
-            err_body = e.read().decode("utf-8", errors="replace")
-        except Exception:
-            pass
-        raise RuntimeError(f"Embedding HTTPError: {e.code} {e.reason} {err_body}")
+        resp = httpx.post(url, json=payload, headers=headers, timeout=timeout)
     except Exception as e:
         raise RuntimeError(f"Embedding request failed: {e}")
 
+    if resp.status_code >= 400:
+        snippet = resp.text[:300]
+        raise RuntimeError(
+            f"Embedding HTTPError: {resp.status_code} {resp.reason_phrase} {snippet}"
+        )
+
+    body = resp.text
     try:
         data = json.loads(body)
         # OpenAI-style response: {"data":[{"embedding":[...]}], ...}

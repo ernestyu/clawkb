@@ -11,6 +11,7 @@ import re
 import json
 import datetime as _dt
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 ISO_Z_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
@@ -18,6 +19,66 @@ ISO_Z_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
 def now_iso_z() -> str:
     """Return current UTC time in ISO 8601 with Z suffix."""
     return _dt.datetime.utcnow().replace(tzinfo=_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def resolve_root_paths(
+    *,
+    cli_root: Optional[str],
+    cli_db: Optional[str],
+    cli_articles_dir: Optional[str],
+    default_root: Optional[str] = None,
+) -> Dict[str, str]:
+    """Resolve root/db/articles-dir with a clear priority chain.
+
+    Priority for root:
+    1. CLI --root
+    2. CLAWKB_ROOT env
+    3. default_root (if provided)
+    4. $CLAWKB_ROOT_FALLBACK or <cwd>/clawkb_data
+
+    DB and articles dir follow the same pattern, but can be overridden via
+    CLAWKB_DB / CLAWKB_ARTICLES_DIR envs.
+    """
+
+    # Root
+    env_root = os.environ.get("CLAWKB_ROOT")
+    root: Path
+    if cli_root:
+        root = Path(cli_root)
+    elif env_root:
+        root = Path(env_root)
+    elif default_root:
+        root = Path(default_root)
+    else:
+        fallback = os.environ.get("CLAWKB_ROOT_FALLBACK")
+        if fallback:
+            root = Path(fallback)
+        else:
+            root = Path.cwd() / "clawkb_data"
+
+    # DB
+    env_db = os.environ.get("CLAWKB_DB")
+    if cli_db:
+        db_path = Path(cli_db)
+    elif env_db:
+        db_path = Path(env_db)
+    else:
+        db_path = root / "clawkb.sqlite3"
+
+    # Articles dir
+    env_articles = os.environ.get("CLAWKB_ARTICLES_DIR")
+    if cli_articles_dir:
+        articles_dir = Path(cli_articles_dir)
+    elif env_articles:
+        articles_dir = Path(env_articles)
+    else:
+        articles_dir = root / "articles"
+
+    return {
+        "root": str(root),
+        "db": str(db_path),
+        "articles_dir": str(articles_dir),
+    }
 
 def parse_iso(s: str) -> Optional[_dt.datetime]:
     """Parse ISO 8601 time. Return None if parsing fails."""

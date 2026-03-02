@@ -24,8 +24,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .utils import now_iso_z
 
-DEFAULT_DB_PATH = "/home/node/.openclaw/workspace/clawkb/clawkb.sqlite3"
-DEFAULT_TOKENIZER_EXT = "/usr/local/lib/libsimple.so"
+DEFAULT_DB_PATH = os.environ.get("CLAWKB_DB_DEFAULT", "/home/node/.openclaw/workspace/clawkb/clawkb.sqlite3")
+DEFAULT_TOKENIZER_EXT = os.environ.get("CLAWKB_TOKENIZER_EXT_DEFAULT", "/usr/local/lib/libsimple.so")
 
 _VEC_GLOBS = [
     "/app/node_modules/**/vec0.so",

@@ -103,20 +103,29 @@ def _heuristic_summary(content: str, max_chars: int = 800) -> str:
     # Simple: take first N chars, but try to preserve paragraph boundary
     return truncate_text(c, max_chars=max_chars)
 
-def _heuristic_tags(content: str, max_tags: int = 8) -> List[str]:
-    kws = extract_keywords_light(content, max_k=max_tags)
-    # Keep unique, short tags
+def _heuristic_tags(content: str, max_tags: int = 8, *, snippet_chars: int = 1000) -> List[str]:
+    # Focus on the first N chars to reduce noise from long tails.
+    snippet = (content or "")[:snippet_chars]
+    kws = extract_keywords_light(snippet, max_k=max_tags * 2)
+    # Simple blacklist for obvious meta tokens
+    blacklist = {"字数", "阅读", "阅读大约需", "分钟", "min", "mins"}
     out = []
     seen = set()
     for k in kws:
         k = k.strip()
         if not k:
             continue
+        # Drop almost pure numbers
+        if len(k) <= 3 and any(ch.isdigit() for ch in k) and not any(ch.isalpha() for ch in k):
+            continue
+        if any(b in k for b in blacklist):
+            continue
         if len(k) > 24:
             continue
-        if k.lower() in seen:
+        low = k.lower()
+        if low in seen:
             continue
-        seen.add(k.lower())
+        seen.add(low)
         out.append(k)
         if len(out) >= max_tags:
             break

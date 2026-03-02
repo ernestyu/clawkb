@@ -126,7 +126,9 @@ def cmd_ingest(args) -> int:
                 existing_id = int(row["id"])
 
         if existing_id is not None:
-            # Update path
+            # Update path: we'll overwrite metadata but keep the same id.
+            # The markdown file will be rewritten below. Old file name may
+            # change due to new title; we do not delete the old file here.
             dbmod.update_article_fields(
                 conn,
                 existing_id,

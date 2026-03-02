@@ -98,7 +98,16 @@ def cmd_ingest(args) -> int:
         need_gen = (not title) or (not summary) or (not tags and not args.tags)
         if need_gen:
             try:
-                gen = generate_fields(body_md, hint_title=title or None, provider=gen_provider, max_summary_chars=args.max_summary_chars)
+                # generate_fields itself will strip obvious metadata/header
+                # noise (e.g. our own --- METADATA ---/--- MARKDOWN ---
+                # blocks and WeChat-style reading stats) before applying
+                # heuristics or calling the small LLM.
+                gen = generate_fields(
+                    body_md,
+                    hint_title=title or None,
+                    provider=gen_provider,
+                    max_summary_chars=args.max_summary_chars,
+                )
                 if not title:
                     title = (gen.get("title") or "").strip()
                 if not summary:

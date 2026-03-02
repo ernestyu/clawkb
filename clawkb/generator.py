@@ -32,6 +32,51 @@ except Exception:  # ImportError or others
     _jieba_analyse = None
     _JIEBA_AVAILABLE = False
 
+
+def _strip_metadata_for_generation(content: str) -> str:
+    """Strip obvious metadata/header noise before generating fields.
+
+    This is intentionally conservative and only targets patterns we know are
+    meta rather than real content, for example:
+
+    - Our own structured markdown with "--- MARKDOWN ---" separator
+    - WeChat-style reading stats like "字数 1136，阅读大约需 6 分钟"
+    """
+    if not content:
+        return content
+
+    c = content.lstrip()
+
+    # 1) If this is our own structured markdown, prefer the MARKDOWN section.
+    #
+    # format_markdown_with_metadata writes:
+    #   --- METADATA ---
+    #   ...
+    #   --- SUMMARY ---
+    #   ...
+    #   --- MARKDOWN ---
+    #   <body>
+    #
+    # For generation we only care about the body.
+    marker = "--- MARKDOWN ---"
+    idx = c.find(marker)
+    if idx != -1:
+        return c[idx + len(marker) :].lstrip("\r\n")
+
+    # 2) Strip leading "字数/阅读时间" 行（常见于微信公众号）。
+    lines = c.splitlines()
+    cleaned: list[str] = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if i <= 2 and stripped:
+            # Typical pattern: "字数 1136，阅读大约需 6 分钟 ..."
+            if ("字数" in stripped and "阅读" in stripped and "分钟" in stripped):
+                # Drop this line entirely.
+                continue
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
 def _chat_url(base_url: str) -> str:
     base = base_url.rstrip("/")
     if base.endswith("/chat/completions"):
@@ -179,9 +224,11 @@ def generate_fields(
 
     if provider == "openclaw":
         # Default: avoid external LLM calls. Assume OpenClaw caller may pass fields.
-        title = _heuristic_title(content, hint_title=hint_title)
-        summary = truncate_text(_heuristic_summary(content, max_chars=min(800, max_summary_chars)), max_chars=max_summary_chars)
-        tags = _heuristic_tags(content)
+        # Strip obvious metadata/header noise before heuristics.
+        clean = _strip_metadata_for_generation(content)
+        title = _heuristic_title(clean, hint_title=hint_title)
+        summary = truncate_text(_heuristic_summary(clean, max_chars=min(800, max_summary_chars)), max_chars=max_summary_chars)
+        tags = _heuristic_tags(clean)
         return {"title": title, "summary": summary, "tags": tags}
 
     if provider == "llm":

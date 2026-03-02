@@ -22,10 +22,9 @@ def now_iso_z() -> str:
 
 
 def resolve_root_paths(
-    *,
-    cli_root: Optional[str],
-    cli_db: Optional[str],
-    cli_articles_dir: Optional[str],
+    cli_root: Optional[str] = None,
+    cli_db: Optional[str] = None,
+    cli_articles_dir: Optional[str] = None,
     default_root: Optional[str] = None,
 ) -> Dict[str, str]:
     """Resolve root/db/articles-dir with a clear priority chain.

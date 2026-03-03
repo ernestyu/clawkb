@@ -533,3 +533,9 @@ Markdown 文件命名形式：
   - 在生成 summary/tags 前，会尝试剥离 Markdown 的 metadata 区块和公众号式阅读统计。
 
 如果你有新的使用场景或改进建议，欢迎在 GitHub 仓库（`ernestyu/Clawkb`）中提交 issue 或 PR。
+
+---
+
+## License
+
+MIT © Ernest Yu

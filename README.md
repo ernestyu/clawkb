@@ -480,3 +480,9 @@ python -m clawkb ingest \
 ---
 
 如果你在使用过程中遇到问题或有改进建议，欢迎在仓库里开 issue / PR。
+
+---
+
+## License
+
+MIT © Ernest Yu

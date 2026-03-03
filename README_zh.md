@@ -48,7 +48,11 @@ Clawkb 设计时默认运行在 OpenClaw 容器内，但也可以在普通 Linux
 - Python 3.10+
 - SQLite 内置 FTS5 支持
 
-推荐但可选：
+Python 依赖：
+
+- `jieba`（可选但强烈推荐，用于中文标签和关键词抽取）
+
+推荐但可选的 sqlite 扩展：
 
 - simple tokenizer 扩展：`libsimple.so`（适合中英混合文本的分词）
 - sqlite-vec 的 vec0 扩展：`vec0.so`
@@ -57,6 +61,27 @@ Clawkb 设计时默认运行在 OpenClaw 容器内，但也可以在普通 Linux
 
 - Tokenizer 扩展：`/usr/local/lib/libsimple.so`
 - vec0 扩展：自动在 `/app/node_modules/**/vec0.so` 或系统库路径中探测
+
+在一个全新的环境中，一般需要：
+
+- 安装 jieba：
+
+  ```bash
+  pip install jieba
+  ```
+
+- 准备 `libsimple.so` 和 `vec0.so`：
+  - 在 OpenClaw 官方容器中，这两个扩展已经预装好；
+  - 在自建环境中，可以：
+    - 优先查一下你所在发行版是否提供 sqlite-vec / simple tokenizer 的二进制包；
+    - 或者根据上游文档自行编译：
+      - sqlite-vec：<https://github.com/asg017/sqlite-vec>
+      - simple tokenizer：参考 OpenClaw 文档中关于 `libsimple.so` 的构建说明。
+
+如果缺少这些扩展，Clawkb 会自动降级：
+
+- FTS：使用 SQLite 内建 tokenizer；
+- 向量检索：在 vec0 不可用时自动关闭，仅使用 FTS。
 
 ---
 
@@ -399,7 +424,7 @@ python -m clawkb update --id ID [补丁参数] [--regen ...]
 
 行为：
 
-- URL 和 ID 是只读的，不会被修改；
+- `id` / `source_url` / `created_at` 视为只读字段，不会被修改；
 - 可更新：`title` / `summary` / `tags` / `category` / `priority`；
 - `--regen {title,summary,tags,embedding,all}`：根据当前 Markdown 正文调用生成器重新计算部分字段；
 - 更新后自动同步 FTS/vec 索引。

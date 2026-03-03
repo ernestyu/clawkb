@@ -41,6 +41,8 @@ Clawkb stores your notes and scraped articles in **SQLite + FTS5 + sqlite-vec** 
 Clawkb expects an environment similar to the OpenClaw container:
 
 - Python 3.10+ with `sqlite3` and FTS5 enabled
+- Python dependencies:
+  - `jieba` (optional but strongly recommended for Chinese tag extraction)
 - sqlite extensions (optional but recommended):
   - `libsimple.so` (tokenizer `simple`) for better CJK tokenization
   - `vec0.so` from [sqlite-vec](https://github.com/asg017/sqlite-vec)
@@ -50,6 +52,25 @@ The repo assumes these paths by default (you can override them):
 
 - Tokenizer extension: `/usr/local/lib/libsimple.so`
 - vec0 extension: auto-discovered under `/app/node_modules/**/vec0.so` or system lib dirs
+
+In a fresh environment you typically need to:
+
+- Install `jieba` via pip:
+
+  ```bash
+  pip install jieba
+  ```
+
+- For `libsimple.so` and `vec0.so`:
+  - In the OpenClaw container these are preinstalled.
+  - On a custom system you can either:
+    - Use distro packages if available (check your Linux distribution), or
+    - Build from source following the upstream docs:
+      - sqlite-vec: <https://github.com/asg017/sqlite-vec>
+      - simple tokenizer: see the OpenClaw docs for building `libsimple.so`.
+  - If these extensions are missing, Clawkb will automatically degrade to:
+    - SQLite built‑in tokenizer for FTS
+    - FTS‑only mode when vec0 is unavailable.
 
 ---
 
@@ -346,7 +367,7 @@ Other flags:
 
 - `show` – dump one record (optionally with full markdown content)
 - `export` – write a record to a `.md` or `.json` file
-- `update` – patch fields or regenerate via generator
+- `update` – patch fields or regenerate via generator (id/source_url/created_at are treated as read-only)
 - `delete` – soft delete by default (sets `deleted_at`); `--hard` for permanent removal
 
 All of these commands now **check that the DB file exists** before opening it:

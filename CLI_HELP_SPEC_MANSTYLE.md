@@ -286,7 +286,7 @@ clawkb update --id ID [patch options] [--regen ...]
 ```
 
 ### DESCRIPTION
-update 支持 patch（显式给字段）和 regen（重新生成 title/summary/tags）。更新后会同步 FTS；如果 embedding 可用且 summary 非空，会同步 vec；否则会尝试删除 vec 中该条向量行（如果存在）。
+update 支持 patch（显式给字段）和 regen（重新生成 title/summary/tags）。`id`/`source_url`/`created_at` 视为只读字段，不会被修改。更新后会同步 FTS；如果 embedding 可用且 summary 非空，会同步 vec；否则会尝试删除 vec 中该条向量行（如果存在）。
 
 ### OPTIONS
 ```text

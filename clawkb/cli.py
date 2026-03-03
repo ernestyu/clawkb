@@ -425,8 +425,8 @@ def cmd_update(args) -> int:
         embed_on = embedding_enabled()
         gen_provider = (args.gen_provider or "openclaw").lower()
 
-        # URL / ID are read-only by design. We only allow updating
-        # title/summary/tags/category/priority.
+        # URL / ID / created_at are read-only by design. We only allow updating
+        # title/summary/tags/category/priority (and modified_at implicitly).
         title = (row["title"] or "")
         summary = (row["summary"] or "")
         tags = (row["tags"] or "")

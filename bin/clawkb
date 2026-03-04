@@ -64,8 +64,9 @@ export CLAWKB_ROOT_DEFAULT="${CLAWKB_ROOT_DEFAULT:-$REPO_ROOT/clawkb_data}"
 
 # 5) Dispatch into the Python CLI
 #    Examples:
-#      ./bin/clawkb ingest --url "https://example.com" --category "blog" --json
+#      CLAWKB_PYTHON=/opt/venv/bin/python ./bin/clawkb ingest --url "https://example.com" --json
 #      ./bin/clawkb search "keyword"
 #      ./bin/clawkb show --id 1 --full
 
-exec /opt/venv/bin/python -m clawkb.cli "$@"
+PYTHON_BIN="${CLAWKB_PYTHON:-python3}"
+exec "$PYTHON_BIN" -m clawkb.cli "$@"

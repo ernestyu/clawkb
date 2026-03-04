@@ -1,5 +1,71 @@
 #!/usr/bin/env bash
+# Main shell front-end for clawkb.
+#
+# Goals:
+# - Zero per-call environment exports for common settings.
+# - Automatically load project .env when present (without overriding OS env).
+# - Auto-fix CLAWKB_VEC_EXT when it mistakenly includes a .so suffix.
+# - Provide a simple `./bin/clawkb <subcommand> [args...]` interface.
+
 set -euo pipefail
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Run as module to allow relative imports
-python3 -m clawkb "$@"
+
+# Resolve repo root as the parent directory of this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${SCRIPT_DIR%/bin}"
+cd "$REPO_ROOT"
+
+# 1) Auto-load .env (if present) without overriding existing env vars
+ENV_FILE="$REPO_ROOT/.env"
+if [[ -f "$ENV_FILE" ]]; then
+  while IFS= read -r line; do
+    # Trim leading/trailing whitespace
+    line="${line##+([[:space:]])}"
+    line="${line%%+([[:space:]])}"
+    # Skip empty or comment lines
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    # Require KEY=VALUE format
+    if [[ "$line" != *"="* ]]; then
+      continue
+    fi
+    key="${line%%=*}"
+    val="${line#*=}"
+    # Trim key/value
+    key="${key##+([[:space:]])}"
+    key="${key%%+([[:space:]])}"
+    val="${val##+([[:space:]])}"
+    val="${val%%+([[:space:]])}"
+    [[ -z "$key" ]] && continue
+    # Strip optional single/double quotes around value
+    if [[ ("$val" == \"*\" && "$val" == *\") || ("$val" == "'*" && "$val" == *"'") ]]; then
+      val="${val:1:${#val}-2}"
+    fi
+    # Only set if not already in environment
+    if [[ -z "${!key-}" ]]; then
+      export "$key"="$val"
+    fi
+  done <"$ENV_FILE"
+fi
+
+# 2) Auto-fix vec extension path for sqlite-vec: if it ends with .so, strip it
+if [[ -n "${CLAWKB_VEC_EXT:-}" && "$CLAWKB_VEC_EXT" == *.so ]]; then
+  export CLAWKB_VEC_EXT="${CLAWKB_VEC_EXT%.so}"
+fi
+
+# 3) Ensure Python can import the local clawkb package
+#    In this repo layout, the Python package lives under ./clawkb/
+if [[ -z "${PYTHONPATH-}" ]]; then
+  export PYTHONPATH="$REPO_ROOT"
+else
+  export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
+fi
+
+# 4) Default root for data if not overridden by env
+export CLAWKB_ROOT_DEFAULT="${CLAWKB_ROOT_DEFAULT:-$REPO_ROOT/clawkb_data}"
+
+# 5) Dispatch into the Python CLI
+#    Examples:
+#      ./bin/clawkb ingest --url "https://example.com" --category "blog" --json
+#      ./bin/clawkb search "keyword"
+#      ./bin/clawkb show --id 1 --full
+
+exec /opt/venv/bin/python -m clawkb.cli "$@"

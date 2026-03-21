@@ -33,6 +33,14 @@ from .scraper import scrape_url
 from .search import hybrid_search
 from . import reindex as reindex_mod
 
+# Plumbing layer (generic db/index/fs helpers)
+try:
+    from clawsqlite_plumbing import db_cli as _db_plumbing_cli
+    from clawsqlite_plumbing import index_cli as _index_plumbing_cli
+except Exception:  # pragma: no cover - allow running without plumbing package present
+    _db_plumbing_cli = None
+    _index_plumbing_cli = None
+
 DEFAULT_ROOT = os.environ.get("CLAWKB_ROOT_DEFAULT", "")
 
 
@@ -688,6 +696,16 @@ def cmd_maintenance(args) -> int:
             sys.stderr.write(f"WARNING: maintenance: failed to delete {p}: {e}\n")
 
     result["deleted"] = deleted
+
+    # 6) Optionally run a VACUUM via plumbing layer to compact the DB
+    if _db_plumbing_cli is not None and os.path.exists(db_path):
+        try:
+            _db_plumbing_cli.main(["vacuum", "--db", db_path])
+            result["vacuum_ran"] = True
+        except Exception as e:
+            # Best-effort: keep maintenance usable even if plumbing fails.
+            sys.stderr.write(f"WARNING: maintenance: db vacuum via plumbing failed: {e}\n")
+
     _print(result, bool(getattr(args, "json", False)))
     return 0
 
@@ -716,6 +734,27 @@ def cmd_reindex(args) -> int:
             # clawsqlite_knowledge.reindex_wrappers.
             out = reindex_mod.rebuild(conn, rebuild_fts=bool(args.fts), rebuild_vec=bool(args.vec), embed_on=embed_on)
             _print(out, bool(args.json))
+
+            # If plumbing is available and vec rebuild was requested, also
+            # run a generic `index check` for observability.
+            if _index_plumbing_cli is not None:
+                try:
+                    _index_plumbing_cli.main(
+                        [
+                            "check",
+                            "--db",
+                            paths["db"],
+                            "--table",
+                            "articles",
+                            "--fts-table",
+                            "articles_fts",
+                            "--vec-table",
+                            "articles_vec",
+                        ]
+                    )
+                except Exception as e:
+                    sys.stderr.write(f"WARNING: reindex: plumbing index check failed: {e}\n")
+
             return 0 if not out.get("errors") else 4
 
         sys.stderr.write("ERROR: reindex requires one of --check/--fix-missing/--rebuild\n")

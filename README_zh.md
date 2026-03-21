@@ -1,6 +1,15 @@
-# Clawkb
+# clawsqlite（knowledge）
 
-一个为 [OpenClaw](https://github.com/openclaw/openclaw) 设计的 **本地 Markdown + SQLite 知识库工具**，人和 Agent 都可以用。
+`clawsqlite` 是一个围绕 SQLite 打造的 CLI 工具箱，主要面向
+[OpenClaw](https://github.com/openclaw/openclaw) 场景。
+
+当前仓库内置的第一个应用是 **本地 Markdown + SQLite 知识库**，之前叫
+“Clawkb”。
+
+- 面向用户 / Skill 的入口将逐步统一为：`clawsqlite knowledge ...`
+- 现有的 `clawkb` 入口会在一段时间内保留为薄包装（向后兼容）。
+
+下面的文档仍然以“知识库应用”的视角展开。
 
 Clawkb 主要帮你解决两件事：
 

@@ -1,8 +1,20 @@
-# Clawkb
+# clawsqlite (knowledge)
 
 **Languages:** English | [中文说明](README_zh.md)
 
-A local Markdown + SQLite knowledge base for [OpenClaw](https://github.com/openclaw/openclaw), designed for both humans and agents.
+`clawsqlite` is a CLI toolbox for SQLite‑based applications in
+[OpenClaw](https://github.com/openclaw/openclaw). The first built‑in
+application is a local Markdown + SQLite knowledge base, previously called
+"Clawkb".
+
+This repo currently focuses on the **knowledge** app:
+
+- commands are exposed under `clawsqlite knowledge ...` for users/skills;
+- the legacy `clawkb` entrypoint remains as a thin wrapper during
+  transition.
+
+A local Markdown + SQLite knowledge base for OpenClaw, designed for both
+humans and agents.
 
 Clawkb helps you:
 

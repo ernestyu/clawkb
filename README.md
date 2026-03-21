@@ -98,15 +98,24 @@ cd Clawkb
 (Inside OpenClaw’s workspace this repo may already be present at
 `/home/node/.openclaw/workspace/Clawkb`.)
 
-You can run Clawkb via the main shell entrypoint:
+You can run the knowledge app via the main shell entrypoint:
 
 ```bash
 # From the repo root
-./bin/clawkb --help
+./bin/clawkb --help           # legacy name (kept for now)
 
 # Or explicitly choose a Python binary (e.g. your venv)
 CLAWKB_PYTHON=/opt/venv/bin/python ./bin/clawkb --help
 ```
+
+In the future, the recommended CLI entrypoint for skills/users will be:
+
+```bash
+clawsqlite knowledge ...
+```
+
+Once the consolidated `clawsqlite` CLI is wired up, `clawsqlite knowledge`
+will invoke the same commands as `clawkb` does today.
 
 `bin/clawkb` will:
 

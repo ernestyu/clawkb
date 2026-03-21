@@ -140,13 +140,28 @@ clawsqlite db vacuum --db ~/.clawsqlite/knowledge.db
 
 **What it does**
 
-Runs `ANALYZE` on the database: updates SQLite's internal statistics so
-query planner can choose better indexes.
+Runs `ANALYZE` on the database: updates SQLite's **internal statistics**
+for each index and table (e.g. in `sqlite_stat1`). These statistics help the
+SQLite **query planner** choose which index to use for a given query.
+
+Concretely, SQLite learns things like:
+
+- roughly how many rows each index covers;
+- how selective certain columns are ("if I filter on this column, will I
+  narrow down to a few rows or almost the whole table?").
+
+It does **not** change your data or schema – only SQLite's internal "mental
+model" of the data distribution.
 
 **When to use it**
 
 - After large bulk imports (e.g. ingesting many articles / books).
-- After changing indexes.
+- After deleting or updating a large portion of the table.
+- After creating or dropping indexes.
+
+On small DBs, SQLite will usually do fine without frequent `ANALYZE`, but
+running it after big data changes can improve performance of complex
+queries.
 
 **Signature**
 
@@ -157,7 +172,7 @@ clawsqlite db analyze --db PATH
 **Examples**
 
 ```bash
-# After a large ingest
+# After a large ingest or heavy cleanup
 clawsqlite db analyze --db ~/.clawsqlite/knowledge.db
 ```
 
@@ -201,9 +216,14 @@ clawsqlite db backup --db ~/.clawsqlite/knowledge.db --out backups --add-timesta
 
 ## 2. `clawsqlite index` – FTS / vector index operations
 
-These commands assume you have a table with some columns that are indexed
-with FTS (full-text search) and/or a vector index. They do **not** assume
-KB-specific columns like `category` or `priority`.
+These commands assume you have a **base table** (e.g. `articles`) and one or
+more **index tables** for it:
+
+- a full-text search (FTS) virtual table (e.g. `articles_fts`), and/or
+- a vector index table/virtual table (e.g. `articles_vec` storing embeddings).
+
+They do **not** assume KB-specific columns like `category` or `priority` –
+only the relationship "this table has these associated indexes".
 
 ### 2.1 `clawsqlite index check`
 
@@ -311,15 +331,25 @@ clawsqlite index rebuild \
 
 **What it does**
 
-Provides a **generic** search primitive on top of FTS and/or vector
-indexes:
+Provides a **generic search primitive** on top of FTS and/or vector indexes.
+It is intentionally low-level and only cares about:
 
-- given a query string, returns row IDs and scores; 
-- supports FTS-only, vector-only, or hybrid scoring.
+- "给我一个查询字符串"
+- "告诉我 FTS / 向量索引用的是哪一套"
+- "我给你按分数排好的一组 rowid + 分数"
 
-This command does **not** know about KB-specific fields (`title`,
-`category`, etc.). It is intended as a low-level core that `kb search` or
-`reading search` can call.
+不关心 `title/category/priority` 等业务字段。
+
+内部可以支持三种模式（具体策略由实现决定）：
+
+1. **FTS-only** – 只用 FTS5 做 BM25 排序；
+2. **Vec-only** – 只用向量相似度排序；
+3. **Hybrid** – FTS + 向量分数做一个混合分数。
+
+上层（`kb search` / `reading search`）决定：
+
+- 这次要用哪种模式；
+- 怎么解释这些 rowid（从哪张表 SELECT 出标题/摘要等）。
 
 **Signature**
 
@@ -346,7 +376,7 @@ clawsqlite index search \
   --limit 20
 ```
 
-Output (for plumbing) could be JSON lines:
+Output (for plumbing) could be JSON lines (one per match):
 
 ```json
 {"rowid": 123, "fts_score": 1.23, "vec_score": 0.87, "hybrid_score": 0.95}
@@ -358,18 +388,27 @@ Application-level search commands would then:
 
 - read these row IDs;
 - join with the base table to fetch titles, categories, etc.;
-- format user-facing output.
+- format user-facing output（比如按 hybrid_score 排序后打印 title/summary）。
 
 ---
 
 ## 3. `clawsqlite fs` – filesystem + DB helpers
 
-Many SQLite-backed apps pair a DB with a set of files (e.g. Markdown
-articles). These commands help keep the two in sync. They **do not**
-encode KB-specific notions like `category`, only the fact that:
+Many SQLite-backed apps pair a DB with a set of files on disk – for
+example:
 
-- there is a root directory of files; and
-- the DB has some mapping to those files (e.g., a `path` column).
+- a knowledge base (SQLite + Markdown 文章目录),
+- 一个阅读库（SQLite + 拆开的章节文件 / 资源），
+- 或者其它 "SQLite + 文件" 模式的应用。
+
+这类命令是为这种模式设计的：**同时看磁盘和 DB，把两边的状态对齐。**
+它们不编码 KB 特有的字段（如 `category`），只假设：
+
+- 有一个根目录 `--root` 放内容文件；
+- DB 某个表有一列是“文件路径”（例如 `articles.relpath`）。
+
+纯表内应用（所有内容都在 SQLite 表里，不写 Markdown / 附件）可以完全
+不使用 `clawsqlite fs` 这一组命令。
 
 ### 3.1 `clawsqlite fs list-orphans`
 

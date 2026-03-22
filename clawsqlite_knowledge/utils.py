@@ -149,15 +149,22 @@ def has_cjk(text: str, threshold: int = 2) -> bool:
     return len(_CJK_RE.findall(text)) >= threshold
 
 def slugify(title: str, max_len: int = 60) -> str:
-    """Generate a filesystem-safe slug (Unicode-friendly).
+    """Generate a filesystem-safe slug for filenames.
 
-    Rules:
-    - Normalize to NFKC
-    - Preserve spaces (whitespace -> single space)
-    - Letters (L*) and numbers (N*) are kept as-is
-    - Any other non-space character becomes '-'
-    - Collapse multiple '-' and trim leading/trailing '-'
+    Strategy:
+    - Prefer pinyin for CJK characters when pypinyin is available;
+    - Preserve ASCII letters/digits and spaces;
+    - Normalize to lowercase, use '-' as word separator;
+    - Collapse repeated '-' and trim.
+
+    The goal is to keep filenames ASCII-friendly across platforms while
+    maintaining some readability for Chinese titles via pinyin.
     """
+
+    try:
+        from pypinyin import lazy_pinyin  # type: ignore
+    except Exception:  # pragma: no cover - optional dependency
+        lazy_pinyin = None
 
     s = (title or "").strip()
     if not s:
@@ -166,27 +173,55 @@ def slugify(title: str, max_len: int = 60) -> str:
     # Normalize full-width / compatibility forms
     s = _ud.normalize("NFKC", s)
 
-    out_chars: List[str] = []
+    pieces: List[str] = []
+    buf: List[str] = []
+
+    def flush_buf():
+        if not buf:
+            return
+        token = "".join(buf)
+        buf.clear()
+        token = token.strip()
+        if not token:
+            return
+        pieces.append(token)
+
     for ch in s:
-        # Normalize any whitespace to a single space so English titles
-        # remain readable ("Deep Learning 101"), while Chinese titles are
-        # unaffected.
         if ch.isspace():
-            out_chars.append(" ")
+            flush_buf()
             continue
         cat = _ud.category(ch)
         if cat[0] in ("L", "N"):
             # Letter or Number (keep Unicode, including CJK)
-            out_chars.append(ch)
-        elif ch == "-":
-            out_chars.append("-")
+            buf.append(ch)
         else:
-            # Replace other non-alnum characters with '-'
-            out_chars.append("-")
+            # punctuation / others -> boundary
+            flush_buf()
 
-    slug = "".join(out_chars)
-    # Collapse multiple spaces and multiple '-' and trim
-    slug = re.sub(r"\s{2,}", " ", slug)
+    flush_buf()
+
+    ascii_parts: List[str] = []
+    for token in pieces:
+        # If token contains CJK and pypinyin is available, use pinyin
+        if has_cjk(token) and lazy_pinyin is not None:
+            pinyin_list = lazy_pinyin(token)
+            part = "-".join(pinyin_list)
+        else:
+            part = token
+        # Keep only ASCII letters/digits and spaces; others become '-'
+        cleaned = []
+        for ch in part:
+            if ch.isascii() and (ch.isalnum() or ch in {"-", "_"}):
+                cleaned.append(ch.lower())
+            elif ch.isspace():
+                cleaned.append("-")
+            else:
+                cleaned.append("-")
+        cleaned_s = "".join(cleaned)
+        ascii_parts.append(cleaned_s)
+
+    slug = "-".join(ascii_parts)
+    # Collapse multiple '-' and trim
     slug = re.sub(r"-{2,}", "-", slug).strip("-")
     if not slug:
         slug = "untitled"

@@ -35,8 +35,10 @@ from . import reindex as reindex_mod
 
 # Plumbing layer (generic db/index/fs helpers)
 try:
+    from clawsqlite_plumbing import db_cli as _db_plumbing_cli
     from clawsqlite_plumbing import index_cli as _index_plumbing_cli
 except Exception:  # pragma: no cover
+    _db_plumbing_cli = None
     _index_plumbing_cli = None
 
 DEFAULT_ROOT = os.environ.get("CLAWKB_ROOT_DEFAULT", "")
@@ -589,11 +591,23 @@ def cmd_delete(args) -> int:
 
 
 def cmd_maintenance(args) -> int:
+    """Knowledge maintenance wrapper.
+
+    语义保持不变：
+    - `days` 控制 `.bak_YYYYMMDD` 备份保留；
+    - 报告 `orphans` / `bak_to_delete` / `broken_records`；
+    - 非 dry-run 情况下删除这些文件 + VACUUM DB。
+
+    目前由于 schema 中只有绝对路径 `local_file_path`，这里暂时
+    继续用现有逻辑扫描文件，而不是直接调用 fs plumbing 的
+    `list-orphans/gc`。后续如果引入 `relpath` 列，可以再切到
+    `clawsqlite fs`。
+    """
+
     paths = _resolve_paths(args)
     articles_dir = paths["articles_dir"]
     db_path = paths["db"]
     dry = bool(args.dry_run)
-    # Respect explicit 0; argparse already provides default when missing.
     days = int(args.days)
 
     now = _dt.datetime.utcnow()
@@ -620,20 +634,18 @@ def cmd_maintenance(args) -> int:
 
     canonical_paths = set(id_to_path.values())
 
-    orphan_files = []
-    bak_files = []
-    broken_records = []
+    orphan_files: List[str] = []
+    bak_files: List[str] = []
+    broken_records: List[Dict[str, Any]] = []
 
     # 2) Scan articles_dir
     if os.path.isdir(articles_dir):
         for root, _, files in os.walk(articles_dir):
             for name in files:
                 path = os.path.join(root, name)
-                rel = os.path.relpath(path, articles_dir)
                 # Detect .bak files; capture leading YYYYMMDD date only
                 m_bak = re.search(r"\.bak_(\d{8})", name)
                 if m_bak:
-                    # Parse timestamp roughly as YYYYMMDD...; we only care about date
                     ts = m_bak.group(1)
                     try:
                         dt = _dt.datetime.strptime(ts[:8], "%Y%m%d")
@@ -689,6 +701,15 @@ def cmd_maintenance(args) -> int:
             sys.stderr.write(f"WARNING: maintenance: failed to delete {p}: {e}\n")
 
     result["deleted"] = deleted
+
+    # 6) DB VACUUM via plumbing
+    if _db_plumbing_cli is not None and os.path.exists(db_path):
+        try:
+            _db_plumbing_cli.main(["vacuum", "--db", db_path])
+            result["vacuum_ran"] = True
+        except Exception as e:
+            sys.stderr.write(f"WARNING: maintenance: db vacuum via plumbing failed: {e}\n")
+
     _print(result, bool(getattr(args, "json", False)))
     return 0
 

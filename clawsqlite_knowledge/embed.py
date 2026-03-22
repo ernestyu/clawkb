@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Embedding client for clawkb.
+Embedding client for clawsqlite_knowledge.
 
 Uses global env vars:
 - EMBEDDING_MODEL
@@ -20,16 +20,20 @@ import httpx
 
 def _embedding_missing_keys() -> list[str]:
     missing: list[str] = []
-    for key in ("EMBEDDING_MODEL", "EMBEDDING_BASE_URL", "EMBEDDING_API_KEY", "CLAWKB_VEC_DIM"):
+    # New prefix: CLAWSQLITE_VEC_DIM; keep CLAWKB_VEC_DIM as fallback.
+    for key in ("EMBEDDING_MODEL", "EMBEDDING_BASE_URL", "EMBEDDING_API_KEY"):
         if not os.environ.get(key):
             missing.append(key)
+    if not (os.environ.get("CLAWSQLITE_VEC_DIM") or os.environ.get("CLAWKB_VEC_DIM")):
+        missing.append("CLAWSQLITE_VEC_DIM/CLAWKB_VEC_DIM")
     return missing
 
 
 def embedding_enabled() -> bool:
     """Return True if vector embedding is fully configured.
 
-    We require both the embedding API triple and CLAWKB_VEC_DIM to be set.
+    We require both the embedding API triple and a vec-dim env
+    (CLAWSQLITE_VEC_DIM preferred, CLAWKB_VEC_DIM as legacy fallback).
     If any of these are missing, vector features are treated as disabled
     (FTS still works normally).
     """
@@ -99,13 +103,14 @@ def _resolve_vec_dim() -> int:
     """Resolve vector dimension from env/project config.
 
     Priority:
-    1. CLAWKB_VEC_DIM env (e.g. from project .env)
-    2. Fallback to 1536 to preserve legacy behavior when no config is set.
+    1. CLAWSQLITE_VEC_DIM env (preferred)
+    2. CLAWKB_VEC_DIM env (legacy fallback)
+    3. Fallback to 1536 to preserve legacy behavior when no config is set.
 
     Note: dimension must be consistent with the articles_vec schema.
     """
 
-    dim_env = os.environ.get("CLAWKB_VEC_DIM")
+    dim_env = os.environ.get("CLAWSQLITE_VEC_DIM") or os.environ.get("CLAWKB_VEC_DIM")
     if dim_env:
         try:
             return int(dim_env)

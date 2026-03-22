@@ -1,0 +1,116 @@
+# -*- coding: utf-8 -*-
+"""Embedding plumbing commands for clawsqlite.
+
+These commands operate on a generic pattern:
+
+- base table with an integer id column (e.g. `id`)
+- a text column (e.g. `summary`) to be embedded
+- a vec table (e.g. `articles_vec`) with schema:
+      CREATE VIRTUAL TABLE articles_vec USING vec0(
+          id INTEGER PRIMARY KEY,
+          embedding float[DIM]
+      );
+
+The actual embedding API (OpenAI-compatible) is delegated to
+`clawsqlite_knowledge.embed` for now so existing env conventions
+(EMBEDDING_MODEL/BASE_URL/API_KEY) are reused. In the future this can be
+split into a separate package.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sqlite3
+from typing import List, Optional
+
+
+def _open_db(path: str) -> sqlite3.Connection:
+    if not path:
+        raise SystemExit("ERROR: --db is required")
+    if not os.path.exists(path):
+        raise SystemExit(f"ERROR: db not found at {path}")
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _cmd_embed_column(args: argparse.Namespace) -> int:
+    # Deferred import to avoid hard dependency when knowledge app is absent.
+    try:
+        from clawsqlite_knowledge.embed import get_embedding, floats_to_f32_blob
+    except Exception as e:  # pragma: no cover
+        raise SystemExit(f"ERROR: embedding client not available (clawsqlite_knowledge.embed): {e}")
+
+    conn = _open_db(args.db)
+    try:
+        table = args.table
+        id_col = args.id_col
+        text_col = args.text_col
+        vec_table = args.vec_table
+        where_clause = args.where or ""
+        limit = args.limit
+        offset = args.offset
+
+        sql = f"SELECT {id_col} AS id, {text_col} AS text FROM {table}"
+        params: List[object] = []
+        if where_clause:
+            sql += f" WHERE {where_clause}"
+        sql += " ORDER BY id"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        if offset is not None:
+            sql += " OFFSET ?"
+            params.append(int(offset))
+
+        rows = list(conn.execute(sql, params))
+        if not rows:
+            print("[INFO] embed-column: no rows matched criteria")
+            return 0
+
+        conn.execute("BEGIN")
+        for r in rows:
+            rid = int(r["id"])
+            text = (r["text"] or "").strip()
+            if not text:
+                continue
+            emb = get_embedding(text)
+            blob = floats_to_f32_blob(emb)
+            conn.execute(
+                f"INSERT INTO {vec_table}(id, embedding) VALUES(?, ?) "
+                f"ON CONFLICT(id) DO UPDATE SET embedding=excluded.embedding",
+                (rid, blob),
+            )
+        conn.commit()
+        print(f"[OK] embed-column: processed {len(rows)} rows from {table}.{text_col} into {vec_table}")
+        return 0
+    finally:
+        conn.close()
+
+
+def build_parser(prog: str = "clawsqlite embed") -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog, description="clawsqlite embedding plumbing commands")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_col = sub.add_parser(
+        "column",
+        help=("Embed a text column into a vec table using the configured embedding service. "
+              "This is a low-level primitive; applications should wrap it."),
+    )
+    p_col.add_argument("--db", required=True, help="SQLite DB path")
+    p_col.add_argument("--table", required=True, help="Base table name")
+    p_col.add_argument("--id-col", required=True, help="Primary key column name in base table")
+    p_col.add_argument("--text-col", required=True, help="Text column to embed")
+    p_col.add_argument("--vec-table", required=True, help="Vector index table name")
+    p_col.add_argument("--where", help="Optional SQL WHERE clause (without 'WHERE')")
+    p_col.add_argument("--limit", type=int, help="Optional LIMIT for batching")
+    p_col.add_argument("--offset", type=int, help="Optional OFFSET for batching")
+    p_col.set_defaults(func=_cmd_embed_column)
+
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return int(args.func(args))

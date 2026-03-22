@@ -7,9 +7,10 @@ Namespaces:
 - `clawsqlite db ...`        – generic SQLite operations
 - `clawsqlite index ...`     – FTS / vector index operations
 - `clawsqlite fs ...`        – filesystem + DB helpers
+- `clawsqlite embed ...`     – embedding primitives (text → vector tables)
 
 设计原则：
-- 顶层只负责选择 namespace（knowledge / db / index / fs），
+- 顶层只负责选择 namespace（knowledge / db / index / fs / embed），
   具体子命令和参数解析完全交给各自子 CLI；
 - 避免在 argparse 里复制子 parser 的 actions，
   不抢占 `-h/--help` 等选项；
@@ -28,6 +29,7 @@ def _print_top_level_help() -> None:
     sub.add_parser("db", help="Low-level SQLite operations")
     sub.add_parser("index", help="Index (FTS / vec) operations")
     sub.add_parser("fs", help="Filesystem + DB helpers")
+    sub.add_parser("embed", help="Embedding primitives (text → vector tables)")
     parser.print_help()
 
 
@@ -64,6 +66,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         from clawsqlite_plumbing import fs_cli
 
         return int(fs_cli.main(remainder))
+
+    if ns == "embed":
+        from clawsqlite_plumbing import embed_cli
+
+        return int(embed_cli.main(remainder))
 
     raise SystemExit(f"Unknown namespace: {ns!r}")
 

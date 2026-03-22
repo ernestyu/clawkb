@@ -119,7 +119,21 @@ def rebuild(
     rebuild_vec: bool,
     embed_on: bool,
 ) -> Dict[str, Any]:
+    """Legacy reindex entrypoint.
+
+    For compatibility with the new plumbing layer semantics we narrow the
+    responsibilities here:
+
+    - When `rebuild_fts=True` we call the DB helper to rebuild FTS. In the
+      knowledge CLI, this path is now typically handled via
+      `clawsqlite index rebuild` instead.
+    - When `rebuild_vec=True` we only clear the vec table; **we no longer
+      recompute embeddings here**. A separate embedding task/CLI should
+      handle generating new vectors from the chosen text column.
+    """
+
     out: Dict[str, Any] = {"fts_rebuilt": False, "vec_rebuilt": False, "vec_skipped": False, "errors": []}
+
     if rebuild_fts:
         try:
             dbmod.rebuild_fts(conn, include_deleted=False)
@@ -128,24 +142,14 @@ def rebuild(
             out["errors"].append(f"fts rebuild failed: {e}")
 
     if rebuild_vec:
-        if not embed_on:
-            out["vec_skipped"] = True
-        else:
-            try:
-                # Clear vec table then repopulate
-                conn.execute("DELETE FROM articles_vec")
-                rows = conn.execute(
-                    "SELECT id, summary FROM articles WHERE deleted_at IS NULL AND summary IS NOT NULL AND trim(summary) != ''"
-                ).fetchall()
-                for r in rows:
-                    aid = int(r["id"])
-                    summary = str(r["summary"] or "")
-                    emb = get_embedding(summary)
-                    blob = floats_to_f32_blob(emb)
-                    dbmod.upsert_vec(conn, aid, blob)
-                out["vec_rebuilt"] = True
-            except Exception as e:
-                out["errors"].append(f"vec rebuild failed: {e}")
+        # Embedding recomputation is now a separate concern; here we only
+        # clear the vec table so that a dedicated embedding command can
+        # repopulate it.
+        try:
+            conn.execute("DELETE FROM articles_vec")
+            out["vec_rebuilt"] = True
+        except Exception as e:
+            out["errors"].append(f"vec rebuild (clear) failed: {e}")
 
     conn.commit()
     return out

@@ -101,6 +101,21 @@ Python 依赖：
 
 ## 3. 安装与启动
 
+### 3.1 通过 PyPI 安装（推荐给一般用户）
+
+发布到 PyPI 后，你可以直接在环境里安装并使用：
+
+```bash
+pip install clawsqlite
+
+# 然后
+clawsqlite knowledge --help
+```
+
+这会在当前环境中安装一个 `clawsqlite` 命令行入口，方便在任意目录调用。
+
+### 3.2 从源码运行（开发 / OpenClaw 工作目录）
+
 克隆本仓库：
 
 ```bash

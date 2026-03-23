@@ -87,6 +87,22 @@ In a fresh environment you typically need to:
 
 ## 3. Installation
 
+### 3.1 From PyPI (recommended for general use)
+
+Once published, the simplest way to use `clawsqlite` is via PyPI:
+
+```bash
+pip install clawsqlite
+
+# Then
+clawsqlite knowledge --help
+```
+
+This installs the `clawsqlite` console script so you can call the CLI from
+anywhere in your environment.
+
+### 3.2 From source (development / OpenClaw workspace)
+
 Clone the repo:
 
 ```bash

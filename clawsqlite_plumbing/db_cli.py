@@ -17,9 +17,13 @@ from typing import Optional
 
 def _open_db(path: str) -> sqlite3.Connection:
     if not path:
-        raise SystemExit("ERROR: --db is required")
+        print("ERROR: --db is required")
+        print("NEXT: pass --db /path/to/your.db (or use 'clawsqlite knowledge' if you meant the knowledge DB)")
+        raise SystemExit(2)
     if not os.path.exists(path):
-        raise SystemExit(f"ERROR: db not found at {path}")
+        print(f"ERROR: db not found at {path}")
+        print("NEXT: check the path, or run 'clawsqlite knowledge ... --root <dir>' to let clawsqlite manage the DB")
+        raise SystemExit(2)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     return conn
@@ -47,7 +51,9 @@ def _cmd_schema(args: argparse.Namespace) -> int:
 
 def _cmd_exec(args: argparse.Namespace) -> int:
     if bool(args.sql) == bool(args.file):
-        raise SystemExit("ERROR: exactly one of --sql or --file is required")
+        print("ERROR: exactly one of --sql or --file is required")
+        print("NEXT: pass either --sql 'SQL...' for inline text or --file path/to/script.sql, but not both")
+        raise SystemExit(2)
 
     conn = _open_db(args.db)
     try:

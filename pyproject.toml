@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clawsqlite"
+version = "0.1.0"
+description = "SQLite toolbox and knowledge base CLI for OpenClaw"
+readme = { file = "README.md", content-type = "text/markdown" }
+license = { file = "LICENSE" }
+authors = [
+  { name = "Ernest Yu" }
+]
+requires-python = ">=3.10"
+dependencies = [
+  "httpx>=0.23",
+  "jieba>=0.42",
+  "pypinyin>=0.55",
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Intended Audience :: Developers",
+  "Environment :: Console",
+  "Topic :: Database",
+  "Topic :: Text Processing",
+]
+
+[project.urls]
+Homepage = "https://github.com/ernestyu/clawsqlite"
+Source = "https://github.com/ernestyu/clawsqlite"
+
+[project.scripts]
+clawsqlite = "clawsqlite_cli:main"
+
+[tool.setuptools]
+packages = ["clawsqlite_knowledge", "clawsqlite_plumbing"]
+py-modules = ["clawsqlite_cli"]
+

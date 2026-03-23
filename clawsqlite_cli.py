@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 from typing import List, Optional
+import sys
 
 
 def _print_top_level_help() -> None:
@@ -72,7 +73,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         return int(embed_cli.main(remainder))
 
-    raise SystemExit(f"Unknown namespace: {ns!r}")
+    sys.stderr.write(f"ERROR: unknown namespace {ns!r}\n")
+    sys.stderr.write("NEXT: run 'clawsqlite --help' to see supported namespaces and usage.\n")
+    return 2
 
 
 if __name__ == "__main__":  # pragma: no cover

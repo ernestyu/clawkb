@@ -136,6 +136,10 @@ def cmd_ingest(args) -> int:
             body_md = md
         except Exception as e:
             sys.stderr.write(f"ERROR: scrape failed: {e}\n")
+            sys.stderr.write(
+                "NEXT: install the 'clawfetch' skill from ClawHub and set CLAWSQLITE_SCRAPE_CMD, "
+                "or pass --scrape-cmd \"<your-scraper> <url>\" for a custom scraper.\n"
+            )
             return 3
     else:
         body_md = args.text
@@ -285,6 +289,7 @@ def cmd_ingest(args) -> int:
             except Exception:
                 pass
         sys.stderr.write(f"ERROR: ingest failed: {e}\n")
+        sys.stderr.write("NEXT: run 'clawsqlite knowledge ingest --help' to check required options and paths.\n")
         return 4
     finally:
         if conn is not None:
@@ -295,6 +300,8 @@ def cmd_show(args) -> int:
     db_path = paths["db"]
     if not os.path.exists(db_path):
         sys.stderr.write(f"ERROR: db not found at {db_path}. Check --root/--db or .env configuration.\n")
+        sys.stderr.write("NEXT: set --root/--db (or CLAWSQLITE_ROOT/CLAWSQLITE_DB) to an existing knowledge_data directory, "
+                         "or run an ingest command first to initialize the DB.\n")
         return 2
     conn = None
     try:
@@ -302,6 +309,7 @@ def cmd_show(args) -> int:
         row = dbmod.get_article(conn, int(args.id))
         if not row:
             sys.stderr.write("ERROR: id not found\n")
+            sys.stderr.write("NEXT: use 'clawsqlite knowledge search ... --json' to locate a valid id before calling show.\n")
             return 2
 
         out = dict(row)
@@ -351,6 +359,7 @@ def cmd_export(args) -> int:
         row = dbmod.get_article(conn, int(args.id))
         if not row:
             sys.stderr.write("ERROR: id not found\n")
+            sys.stderr.write("NEXT: use 'clawsqlite knowledge search ... --json' to locate a valid id before calling export.\n")
             return 2
         out = dict(row)
 
@@ -388,12 +397,14 @@ def cmd_export(args) -> int:
                 f.write(md)
         else:
             sys.stderr.write("ERROR: export format must be md or json\n")
+            sys.stderr.write("NEXT: use --format md or --format json (default is md).\n")
             return 2
 
         _print({"ok": True, "out": out_path}, bool(args.json))
         return 0
     except Exception as e:
         sys.stderr.write(f"ERROR: export failed: {e}\n")
+        sys.stderr.write("NEXT: run 'clawsqlite knowledge export --help' to verify options and output path.\n")
         return 4
     finally:
         if conn is not None:
@@ -453,6 +464,7 @@ def cmd_search(args) -> int:
         return 0
     except Exception as e:
         sys.stderr.write(f"ERROR: search failed: {e}\n")
+        sys.stderr.write("NEXT: run 'clawsqlite knowledge search --help' to check mode/filters, and verify embedding env vars when using hybrid/vec.\n")
         return 4
     finally:
         if conn is not None:
@@ -466,11 +478,14 @@ def cmd_update(args) -> int:
         db_path = paths["db"]
         if not os.path.exists(db_path):
             sys.stderr.write(f"ERROR: db not found at {db_path}. Check --root/--db or .env configuration.\n")
+            sys.stderr.write("NEXT: set --root/--db (or CLAWSQLITE_ROOT/CLAWSQLITE_DB) to an existing knowledge_data directory, "
+                             "or run an ingest command first to initialize the DB.\n")
             return 2
         conn = _open_for_command(db_path, need_fts=True, need_vec=True, args=args)
         row = dbmod.get_article(conn, aid)
         if not row:
             sys.stderr.write("ERROR: id not found\n")
+            sys.stderr.write("NEXT: use 'clawsqlite knowledge search ... --json' to locate a valid id before calling update.\n")
             return 2
 
         embed_on = embedding_enabled()
@@ -562,6 +577,7 @@ def cmd_delete(args) -> int:
         row = dbmod.get_article(conn, aid)
         if not row:
             sys.stderr.write("ERROR: id not found\n")
+            sys.stderr.write("NEXT: use 'clawsqlite knowledge search ... --json' to locate a valid id before calling delete.\n")
             return 2
 
         conn.execute("BEGIN")
@@ -806,10 +822,12 @@ def cmd_reindex(args) -> int:
             return 0 if not out.get("errors") else 4
 
         sys.stderr.write("ERROR: reindex requires one of --check/--fix-missing/--rebuild\n")
+        sys.stderr.write("NEXT: run 'clawsqlite knowledge reindex --help' to choose an appropriate mode.\n")
         return 2
 
     except Exception as e:
         sys.stderr.write(f"ERROR: reindex failed: {e}\n")
+        sys.stderr.write("NEXT: inspect the error above, then rerun with '--check' first to see current index status.\n")
         return 4
     finally:
         if conn is not None:

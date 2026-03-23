@@ -63,6 +63,8 @@ def get_embedding(text: str, *, timeout: int = 60) -> List[float]:
     base_url = os.environ.get("EMBEDDING_BASE_URL")
     api_key = os.environ.get("EMBEDDING_API_KEY")
     if not (model and base_url and api_key):
+        # This is a programmer/config error; CLI callers should surface
+        # a NEXT hint alongside the exception message.
         raise RuntimeError("Embedding is not enabled: missing EMBEDDING_MODEL/BASE_URL/API_KEY")
 
     url = _embeddings_url(base_url)

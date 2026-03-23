@@ -26,9 +26,13 @@ from typing import List, Optional
 
 def _open_db(path: str) -> sqlite3.Connection:
     if not path:
-        raise SystemExit("ERROR: --db is required")
+        print("ERROR: --db is required")
+        print("NEXT: pass --db /path/to/your.db (or use 'clawsqlite knowledge' if you meant the knowledge DB)")
+        raise SystemExit(2)
     if not os.path.exists(path):
-        raise SystemExit(f"ERROR: db not found at {path}")
+        print(f"ERROR: db not found at {path}")
+        print("NEXT: check the path, or run 'clawsqlite knowledge ... --root <dir>' to let clawsqlite manage the DB")
+        raise SystemExit(2)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     return conn

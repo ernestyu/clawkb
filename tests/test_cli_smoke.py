@@ -21,16 +21,30 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import tempfile
+import sys
+import contextlib
+import shutil
 import unittest
+import uuid
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+BASE_TMP = Path(os.environ.get("CLAWSQLITE_TEST_TMP", str(REPO_ROOT / ".tmp_tests")))
+BASE_TMP.mkdir(parents=True, exist_ok=True)
 
 # Prefer the venv python if available (matches how we run other tooling).
-DEFAULT_PY = "/opt/venv/bin/python"
+DEFAULT_PY = sys.executable
 PYTHON_BIN = os.environ.get("CLAWSQLITE_PYTHON", DEFAULT_PY)
+
+@contextlib.contextmanager
+def _tempdir():
+    path = BASE_TMP / f"tmp_{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=False)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 class CLISmokeTests(unittest.TestCase):
@@ -68,7 +82,7 @@ class CLISmokeTests(unittest.TestCase):
 
     def test_knowledge_and_plumbing_smoke(self):
         """End-to-end smoke test for knowledge CLI + basic plumbing commands."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with _tempdir() as tmpdir:
             root = Path(tmpdir) / "kb_root"
             db_path = root / "knowledge.sqlite3"
 

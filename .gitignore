@@ -29,4 +29,6 @@ dist/
 Thumbs.db
 
 # User Data
-clawkb_data/
+knowledge_data/
+docs/
+tests/

@@ -20,12 +20,19 @@ import httpx
 
 def _embedding_missing_keys() -> list[str]:
     missing: list[str] = []
-    # New prefix: CLAWSQLITE_VEC_DIM; keep CLAWKB_VEC_DIM as fallback.
     for key in ("EMBEDDING_MODEL", "EMBEDDING_BASE_URL", "EMBEDDING_API_KEY"):
         if not os.environ.get(key):
             missing.append(key)
-    if not (os.environ.get("CLAWSQLITE_VEC_DIM") or os.environ.get("CLAWKB_VEC_DIM")):
-        missing.append("CLAWSQLITE_VEC_DIM/CLAWKB_VEC_DIM")
+    dim_env = os.environ.get("CLAWSQLITE_VEC_DIM")
+    if not dim_env:
+        missing.append("CLAWSQLITE_VEC_DIM")
+    else:
+        try:
+            dim = int(dim_env)
+            if dim <= 0:
+                raise ValueError
+        except Exception:
+            missing.append("CLAWSQLITE_VEC_DIM")
     return missing
 
 
@@ -33,7 +40,7 @@ def embedding_enabled() -> bool:
     """Return True if vector embedding is fully configured.
 
     We require both the embedding API triple and a vec-dim env
-    (CLAWSQLITE_VEC_DIM preferred, CLAWKB_VEC_DIM as legacy fallback).
+    (CLAWSQLITE_VEC_DIM).
     If any of these are missing, vector features are treated as disabled
     (FTS still works normally).
     """
@@ -74,8 +81,8 @@ def get_embedding(text: str, *, timeout: int = 60) -> List[float]:
         "Authorization": f"Bearer {api_key}",
         # A realistic UA helps avoid naive 403/1010 style blocks.
         "User-Agent": os.environ.get(
-            "CLAWKB_HTTP_USER_AGENT",
-            "Mozilla/5.0 (X11; Linux x86_64) Clawkb/1.0",
+            "CLAWSQLITE_HTTP_USER_AGENT",
+            "Mozilla/5.0 (X11; Linux x86_64) Clawsqlite/1.0",
         ),
     }
 
@@ -105,21 +112,21 @@ def _resolve_vec_dim() -> int:
     """Resolve vector dimension from env/project config.
 
     Priority:
-    1. CLAWSQLITE_VEC_DIM env (preferred)
-    2. CLAWKB_VEC_DIM env (legacy fallback)
-    3. Fallback to 1536 to preserve legacy behavior when no config is set.
+    1. CLAWSQLITE_VEC_DIM env (must be a positive integer)
 
     Note: dimension must be consistent with the articles_vec schema.
     """
 
-    dim_env = os.environ.get("CLAWSQLITE_VEC_DIM") or os.environ.get("CLAWKB_VEC_DIM")
-    if dim_env:
-        try:
-            return int(dim_env)
-        except Exception:
-            pass
-    # Legacy default
-    return 1536
+    dim_env = os.environ.get("CLAWSQLITE_VEC_DIM")
+    if not dim_env:
+        raise ValueError("CLAWSQLITE_VEC_DIM is required for embeddings")
+    try:
+        dim = int(dim_env)
+    except Exception:
+        raise ValueError("CLAWSQLITE_VEC_DIM must be an integer")
+    if dim <= 0:
+        raise ValueError("CLAWSQLITE_VEC_DIM must be a positive integer")
+    return dim
 
 
 def floats_to_f32_blob(vec: List[float], *, dim: int | None = None) -> bytes:

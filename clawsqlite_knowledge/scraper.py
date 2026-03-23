@@ -6,7 +6,7 @@ clawsqlite_knowledge itself does not implement web scraping. It integrates with 
 
 You can configure the scraper command via:
 - CLI flag: --scrape-cmd
-- Env: CLAWSQLITE_SCRAPE_CMD (preferred) or legacy CLAWKB_SCRAPE_CMD
+- Env: CLAWSQLITE_SCRAPE_CMD
 
 The command must accept the URL as its last argument and print UTF-8 text.
 Recommended output format:
@@ -21,9 +21,9 @@ import subprocess
 from typing import Optional, Tuple
 
 def scrape_url(url: str, *, scrape_cmd: Optional[str] = None, timeout: int = 120) -> Tuple[Optional[str], str]:
-    cmd = scrape_cmd or os.environ.get("CLAWSQLITE_SCRAPE_CMD") or os.environ.get("CLAWKB_SCRAPE_CMD")
+    cmd = scrape_cmd or os.environ.get("CLAWSQLITE_SCRAPE_CMD")
     if not cmd:
-        raise RuntimeError("URL ingest requires a scraper. Set --scrape-cmd or env CLAWSQLITE_SCRAPE_CMD/CLAWKB_SCRAPE_CMD.")
+        raise RuntimeError("URL ingest requires a scraper. Set --scrape-cmd or env CLAWSQLITE_SCRAPE_CMD.")
 
     # Build argv safely. We avoid shell=True by default to reduce quoting issues.
     if "{url}" in cmd:
@@ -72,7 +72,7 @@ def scrape_url(url: str, *, scrape_cmd: Optional[str] = None, timeout: int = 120
                 break
         body = "\n".join(lines[md_idx + 1 :]).strip()
     else:
-        # Legacy format: optional "Title:" line followed by markdown body.
+        # Alternate format: optional "Title:" line followed by markdown body.
         body_lines = []
         for line in lines:
             if line.startswith("Title:"):

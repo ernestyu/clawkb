@@ -41,7 +41,7 @@ except Exception:  # pragma: no cover
     _db_plumbing_cli = None
     _index_plumbing_cli = None
 
-DEFAULT_ROOT = os.environ.get("CLAWKB_ROOT_DEFAULT", "")
+DEFAULT_ROOT = os.environ.get("CLAWSQLITE_ROOT_DEFAULT", "")
 
 
 def _resolve_paths(args) -> Dict[str, str]:
@@ -67,6 +67,16 @@ def _print(obj: Any, as_json: bool) -> None:
             sys.stdout.write(obj + "\n")
         else:
             sys.stdout.write(str(obj) + "\n")
+
+def _extract_markdown_body(content: str) -> str:
+    """Extract markdown body from our metadata+markdown format."""
+    if not content:
+        return ""
+    marker = "--- MARKDOWN ---"
+    idx = content.find(marker)
+    if idx != -1:
+        return content[idx + len(marker) :].lstrip("\r\n")
+    return content
 
 def _open_for_command(db_path: str, *, need_fts: bool, need_vec: bool, args) -> Any:
     tokenizer_ext = getattr(args, "tokenizer_ext", None)
@@ -177,6 +187,7 @@ def cmd_ingest(args) -> int:
     tags = comma_join_tags(tags)
 
     created_at = now_iso_z()
+    created_at_for_md = created_at
 
     conn = None
     old_path: Optional[str] = None
@@ -192,6 +203,9 @@ def cmd_ingest(args) -> int:
             if row is not None:
                 existing_id = int(row["id"])
                 old_path = (row["local_file_path"] or "").strip() or None
+                existing_created_at = (row["created_at"] or "").strip()
+                if existing_created_at:
+                    created_at_for_md = existing_created_at
 
         if existing_id is not None:
             # Update path: overwrite metadata but keep the same id.
@@ -223,7 +237,7 @@ def cmd_ingest(args) -> int:
             article_id=new_id,
             title=title,
             source_url=source_url,
-            created_at=created_at,
+            created_at=created_at_for_md,
             category=category,
             tags=tags,
             priority=priority,
@@ -418,13 +432,41 @@ def cmd_search(args) -> int:
     try:
         conn = _open_for_command(paths["db"], need_fts=True, need_vec=True, args=args)
 
-        # If DB doesn't have vec table (e.g. first-run or vec disabled),
-        # downgrade to FTS-only behavior even if embedding is configured.
+        # Determine embedding availability and vec index readiness.
+        missing_keys = _embedding_missing_keys()
+        vec_ready = False
         try:
-            if not dbmod.vec_table_exists(conn):
-                embed_on = False
+            vec_ready = dbmod.vec_table_exists(conn)
         except Exception:
-            embed_on = False
+            vec_ready = False
+
+        embed_on = (not missing_keys) and vec_ready
+
+        def _embed_reason() -> str:
+            reasons = []
+            if missing_keys:
+                reasons.append("missing " + ", ".join(missing_keys))
+            if not vec_ready:
+                reasons.append("vec index not available (vec0 extension not loaded)")
+            return "; ".join(reasons) if reasons else "embedding not available"
+
+        # Vec-only mode requires embeddings; fail fast with a clear NEXT hint.
+        if (args.mode or "hybrid").lower() == "vec" and not embed_on:
+            reason = _embed_reason()
+            sys.stderr.write(f"ERROR: vector search requires embeddings; {reason}.\n")
+            sys.stderr.write(
+                "NEXT: configure EMBEDDING_MODEL/EMBEDDING_BASE_URL/EMBEDDING_API_KEY "
+                "and CLAWSQLITE_VEC_DIM, and ensure vec0 is available.\n"
+            )
+            return 2
+
+        # Hybrid mode auto-falls back to FTS, but tell the user.
+        if (args.mode or "hybrid").lower() == "hybrid" and not embed_on:
+            reason = _embed_reason()
+            sys.stderr.write(
+                "NEXT: embedding is not available (" + reason + "); "
+                "falling back to FTS-only. Configure embedding + vec0 for better results.\n"
+            )
 
         def _qvec_blob(q: str) -> bytes:
             emb = get_embedding(q)
@@ -495,6 +537,7 @@ def cmd_update(args) -> int:
         # title/summary/tags/category/priority (and modified_at implicitly).
         title = (row["title"] or "")
         summary = (row["summary"] or "")
+        summary_before = summary
         tags = (row["tags"] or "")
         category = (row["category"] or "")
         priority = int(row["priority"] or 0)
@@ -521,18 +564,76 @@ def cmd_update(args) -> int:
             else:
                 content = summary or title
 
+            gen_cache = None
+            def _gen_once():
+                nonlocal gen_cache
+                if gen_cache is None:
+                    gen_cache = generate_fields(
+                        content,
+                        hint_title=title or None,
+                        provider=gen_provider,
+                        max_summary_chars=args.max_summary_chars,
+                    )
+                return gen_cache
+
             if regen in ("title", "all"):
-                gen = generate_fields(content, hint_title=title or None, provider=gen_provider, max_summary_chars=args.max_summary_chars)
+                gen = _gen_once()
                 title = (gen.get("title") or title).strip() or title
             if regen in ("summary", "all"):
-                gen = generate_fields(content, hint_title=title or None, provider=gen_provider, max_summary_chars=args.max_summary_chars)
+                gen = _gen_once()
                 summary = truncate_text((gen.get("summary") or summary).strip(), max_chars=args.max_summary_chars)
             if regen in ("tags", "all"):
-                gen = generate_fields(content, hint_title=title or None, provider=gen_provider, max_summary_chars=args.max_summary_chars)
+                gen = _gen_once()
                 tags = comma_join_tags(gen.get("tags") or tags)
 
+        # Sync markdown file + local_file_path based on updated title.
+        ensure_dir(paths["articles_dir"])
+        old_path = (row["local_file_path"] or "").strip()
+        new_path = article_abspath(paths["articles_dir"], aid, title)
+        content = ""
+        for candidate in [old_path, new_path]:
+            if candidate and os.path.exists(candidate):
+                try:
+                    content = read_markdown(candidate)
+                    break
+                except Exception:
+                    content = ""
+        body_md = _extract_markdown_body(content) if content else (summary or title)
+
+        # If the filename changes, keep a backup of the old file.
+        if old_path and old_path != new_path and os.path.exists(old_path):
+            ts_suffix = now_iso_z().replace(":", "").replace("-", "").replace("T", "").replace("Z", "")
+            bak_path = f"{old_path}.bak_{ts_suffix}"
+            try:
+                os.rename(old_path, bak_path)
+            except Exception:
+                pass
+
+        created_at = (row["created_at"] or "").strip() or now_iso_z()
+        source_url = (row["source_url"] or "").strip() or "Local"
+        md_content = format_markdown_with_metadata(
+            article_id=aid,
+            title=title,
+            source_url=source_url,
+            created_at=created_at,
+            category=category,
+            tags=tags,
+            priority=priority,
+            body_markdown=body_md,
+        )
+        write_markdown(new_path, md_content)
+
         conn.execute("BEGIN")
-        dbmod.update_article_fields(conn, aid, title=title, summary=summary, tags=tags, category=category, priority=priority)
+        dbmod.update_article_fields(
+            conn,
+            aid,
+            title=title,
+            summary=summary,
+            tags=tags,
+            category=category,
+            priority=priority,
+            local_file_path=new_path,
+        )
 
         # sync FTS
         try:
@@ -541,13 +642,15 @@ def cmd_update(args) -> int:
             sys.stderr.write(f"WARNING: fts sync failed: {e}\n")
 
         # sync vec
-        if summary and embed_on:
+        regen = (args.regen or "").lower().strip()
+        need_vec_recompute = regen in ("embedding", "all") or (summary != summary_before)
+        if summary and embed_on and need_vec_recompute:
             try:
                 blob = floats_to_f32_blob(get_embedding(summary))
                 dbmod.upsert_vec(conn, aid, blob)
             except Exception as e:
                 sys.stderr.write(f"WARNING: vec sync failed: {e}\n")
-        else:
+        elif not summary or not embed_on:
             try:
                 dbmod.delete_vec(conn, aid)
             except Exception:
@@ -809,9 +912,9 @@ def cmd_reindex(args) -> int:
                 except Exception as e:
                     sys.stderr.write(f"WARNING: reindex: plumbing FTS rebuild failed: {e}\n")
 
-            # 2) Keep vec rebuild semantics as-is for now (recompute
-            #    embeddings), so existing workflows do not break. In the
-            #    future this can be split into a separate embedding task.
+            # 2) Vec rebuild semantics: clear the vec table only. Embedding
+            #    recomputation is handled by a separate embedding task/CLI
+            #    (e.g. `clawsqlite knowledge embed-from-summary`).
             out = reindex_mod.rebuild(
                 conn,
                 rebuild_fts=False,  # FTS handled (or attempted) via plumbing above
@@ -838,29 +941,29 @@ def _add_common_flags(parser: argparse.ArgumentParser) -> None:
         "--root",
         default=None,
         help=(
-            "Root dir. Priority: CLI --root > $CLAWSQLITE_ROOT > $CLAWKB_ROOT > "
-            "$CLAWSQLITE_ROOT_FALLBACK/$CLAWKB_ROOT_FALLBACK > <cwd>/knowledge_data."
+            "Root dir. Priority: CLI --root > $CLAWSQLITE_ROOT > "
+            "$CLAWSQLITE_ROOT_DEFAULT > <cwd>/knowledge_data."
         ),
     )
     parser.add_argument(
         "--db",
         default=None,
-        help="SQLite db path. Priority: CLI --db > $CLAWSQLITE_DB > $CLAWKB_DB > <root>/knowledge.sqlite3",
+        help="SQLite db path. Priority: CLI --db > $CLAWSQLITE_DB > <root>/knowledge.sqlite3",
     )
     parser.add_argument(
         "--articles-dir",
         default=None,
-        help="Articles markdown dir. Priority: CLI --articles-dir > $CLAWSQLITE_ARTICLES_DIR > $CLAWKB_ARTICLES_DIR > <root>/articles",
+        help="Articles markdown dir. Priority: CLI --articles-dir > $CLAWSQLITE_ARTICLES_DIR > <root>/articles",
     )
     parser.add_argument(
         "--tokenizer-ext",
         default=None,
-        help="Tokenizer extension path. Default: /usr/local/lib/libsimple.so or $CLAWSQLITE_TOKENIZER_EXT/$CLAWKB_TOKENIZER_EXT",
+        help="Tokenizer extension path. Default: /usr/local/lib/libsimple.so or $CLAWSQLITE_TOKENIZER_EXT",
     )
     parser.add_argument(
         "--vec-ext",
         default=None,
-        help="vec0 extension path. Default: auto-discover or $CLAWSQLITE_VEC_EXT/$CLAWKB_VEC_EXT",
+        help="vec0 extension path. Default: auto-discover or $CLAWSQLITE_VEC_EXT",
     )
     parser.add_argument("--json", action="store_true", help="Output JSON")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
@@ -885,7 +988,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--priority", default=0, type=int, help="Priority (0 default)")
     sp.add_argument("--gen-provider", default="openclaw", choices=["openclaw", "llm", "off"], help="Field generator provider")
     sp.add_argument("--max-summary-chars", default=1200, type=int, help="Hard limit for summary length (chars)")
-    sp.add_argument("--scrape-cmd", default=None, help="Scraper command for URL ingest. Or env CLAWSQLITE_SCRAPE_CMD/CLAWKB_SCRAPE_CMD")
+    sp.add_argument("--scrape-cmd", default=None, help="Scraper command for URL ingest. Or env CLAWSQLITE_SCRAPE_CMD")
     sp.add_argument("--update-existing", action="store_true", help="If URL exists, refresh that record instead of inserting a new one")
     sp.set_defaults(func=cmd_ingest)
 
@@ -930,7 +1033,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--tags", default=None, help="Patch: new tags (comma-separated)")
     sp.add_argument("--category", default=None, help="Patch: new category")
     sp.add_argument("--priority", default=None, type=int, help="Patch: new priority")
-    sp.add_argument("--regen", default=None, choices=["title", "summary", "tags", "embedding", "all"], help="Regenerate fields")
+    sp.add_argument(
+        "--regen",
+        default=None,
+        choices=["title", "summary", "tags", "embedding", "all"],
+        help="Regenerate fields (embedding=refresh vec from summary)",
+    )
     sp.add_argument("--gen-provider", default="openclaw", choices=["openclaw", "llm", "off"], help="Generator provider for regen")
     sp.add_argument("--max-summary-chars", default=1200, type=int, help="Hard limit for summary length (chars)")
     sp.set_defaults(func=cmd_update)

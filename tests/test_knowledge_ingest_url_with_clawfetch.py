@@ -12,21 +12,36 @@
 注意：
 - 这里不直接走 ingest --url + --scrape-cmd，而是显式分成两步：
   抓取 → 文本 ingest，便于在测试中检查中间产物；
-- 真实 URL 选用的是公开微信文章：
-  https://mp.weixin.qq.com/s/UzgKeQwWWoV4v884l_jcrg
+- URL 可通过环境变量 `CLAWSQLITE_TEST_WECHAT_URL` 覆盖。
+- 该测试依赖外部工具（node + clawhub-skills/clawfetch）以及可用的网络。
+  默认情况下会跳过；设置 `CLAWSQLITE_RUN_WECHAT_TESTS=1` 才会执行。
 """
 from __future__ import annotations
 
 import json
 import os
 import subprocess
-import tempfile
+import sys
+import contextlib
+import shutil
 import unittest
+import uuid
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PY = "/opt/venv/bin/python"
+BASE_TMP = Path(os.environ.get("CLAWSQLITE_TEST_TMP", str(REPO_ROOT / ".tmp_tests")))
+BASE_TMP.mkdir(parents=True, exist_ok=True)
+DEFAULT_PY = sys.executable
 PYTHON_BIN = os.environ.get("CLAWSQLITE_PYTHON", DEFAULT_PY)
+
+@contextlib.contextmanager
+def _tempdir():
+    path = BASE_TMP / f"tmp_{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=False)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 class KnowledgeIngestURLWithClawfetchTests(unittest.TestCase):
@@ -52,28 +67,43 @@ class KnowledgeIngestURLWithClawfetchTests(unittest.TestCase):
 
     def test_wechat_article_via_clawfetch_and_knowledge_ingest(self):
         """抓取真实微信文章并通过 ingest --text 写入知识库。"""
-        wechat_url = "https://mp.weixin.qq.com/s/UzgKeQwWWoV4v884l_jcrg"
+        if os.environ.get("CLAWSQLITE_RUN_WECHAT_TESTS", "").strip() != "1":
+            self.skipTest("Set CLAWSQLITE_RUN_WECHAT_TESTS=1 to enable live WeChat + clawfetch integration test")
+
+        wechat_url = os.environ.get(
+            "CLAWSQLITE_TEST_WECHAT_URL",
+            "https://mp.weixin.qq.com/s/7GQpp2TzkF6GLeKOuOeF6Q",
+        )
 
         # 1) 用 clawfetch skill 抓取网页为 markdown
-        skills_root = REPO_ROOT.parent / "clawhub-skills" / "clawfetch"
-        self.assertTrue(skills_root.exists(), "clawfetch skill directory missing")
+        skills_root = Path(
+            os.environ.get(
+                "CLAWSQLITE_TEST_CLAWFETCH_ROOT",
+                str(REPO_ROOT.parent / "clawhub-skills" / "clawfetch"),
+            )
+        )
+        if not skills_root.exists():
+            self.skipTest(f"clawfetch skill directory missing: {skills_root}")
+        if shutil.which("node") is None:
+            self.skipTest("node is not available on PATH")
 
-        out_md = Path("/tmp/clawfetch-wechat-test.md")
+        clawfetch_js = skills_root / "node_modules" / "clawfetch" / "clawfetch.js"
+        if not clawfetch_js.exists():
+            self.skipTest("clawfetch is not installed; run npm install in clawhub-skills/clawfetch")
+
         fetch_cmd = [
             "node",
-            "node_modules/clawfetch/clawfetch.js",
+            str(clawfetch_js),
             wechat_url,
         ]
         p = self._run(fetch_cmd, cwd=skills_root)
-        # 将 stdout 写入临时文件，便于后续调试和 ingest
-        out_md.write_text(p.stdout, encoding="utf-8")
 
         # 2) 读取抓取到的 markdown 内容，作为文本入库
-        content = out_md.read_text(encoding="utf-8")
+        content = p.stdout
         self.assertIn("--- METADATA ---", content)
         self.assertIn("--- MARKDOWN ---", content)
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with _tempdir() as tmpdir:
             root = Path(tmpdir) / "kb_root"
             root.mkdir(parents=True, exist_ok=True)
 

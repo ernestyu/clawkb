@@ -8,9 +8,7 @@ application is a local Markdown + SQLite knowledge base.
 
 This repo currently focuses on the **knowledge** app:
 
-- commands are exposed under `clawsqlite knowledge ...` for users/skills;
-- the old `clawkb` name has been fully migrated to `clawsqlite` in code and
-  package layout.
+- commands are exposed under `clawsqlite knowledge ...` for users/skills.
 
 A local Markdown + SQLite knowledge base for OpenClaw, designed for both
 humans and agents.
@@ -21,7 +19,7 @@ The knowledge app helps you:
 - Run fast full‑text search over your notes and scraped articles
 - Optionally enable vector search via an external embedding service
 - Regenerate titles/summaries/tags via heuristics or a small LLM
-- Keep the KB healthy with explicit maintenance commands (reindex, check, fix, prune)
+- Keep the KB healthy with explicit maintenance commands (reindex/check/fix + maintenance prune/gc)
 
 > **Status**: already used in real OpenClaw setups. The schema and CLI are kept small and stable on purpose.
 
@@ -54,6 +52,7 @@ The knowledge app expects an environment similar to the OpenClaw container:
 - Python 3.10+ with `sqlite3` and FTS5 enabled
 - Python dependencies:
   - `jieba` (optional but strongly recommended for Chinese tag extraction)
+  - `pypinyin` (optional; used to generate pinyin slugs for CJK titles)
 - sqlite extensions (optional but recommended):
   - `libsimple.so` (tokenizer `simple`) for better CJK tokenization
   - `vec0.so` from [sqlite-vec](https://github.com/asg017/sqlite-vec)
@@ -129,8 +128,7 @@ The recommended CLI entrypoint for skills/users is:
 clawsqlite knowledge ...
 ```
 
-The older `clawkb` entrypoint is no longer part of this repo; new usage
-should always prefer:
+Use:
 
 ```bash
 clawsqlite knowledge ...
@@ -148,18 +146,16 @@ flags + env + defaults.
 Priority for root:
 
 1. CLI: `--root`
-2. Env: `CLAWSQLITE_ROOT` (preferred)
-3. Env: `CLAWKB_ROOT` (legacy, still read for compatibility)
-4. Env: `CLAWSQLITE_ROOT_FALLBACK` / `CLAWKB_ROOT_FALLBACK`
-5. Fallback: `<current working dir>/knowledge_data`
+2. Env: `CLAWSQLITE_ROOT`
+3. Default: `<current working dir>/knowledge_data`
 
 DB path:
 
-- `--db` > `CLAWSQLITE_DB` > `CLAWKB_DB` (legacy) > `<root>/knowledge.sqlite3`
+- `--db` > `CLAWSQLITE_DB` > `<root>/knowledge.sqlite3`
 
 Articles dir:
 
-- `--articles-dir` > `CLAWSQLITE_ARTICLES_DIR` > `CLAWKB_ARTICLES_DIR` (legacy) > `<root>/articles`
+- `--articles-dir` > `CLAWSQLITE_ARTICLES_DIR` > `<root>/articles`
 
 ### 4.2 Project `.env`
 
@@ -177,7 +173,7 @@ cp ENV.example .env
 EMBEDDING_BASE_URL=https://embed.example.com/v1
 EMBEDDING_MODEL=your-embedding-model
 EMBEDDING_API_KEY=sk-your-embedding-key
-CLAWKB_VEC_DIM=1024
+CLAWSQLITE_VEC_DIM=1024
 
 # Small LLM (optional)
 SMALL_LLM_BASE_URL=https://llm.example.com/v1
@@ -185,15 +181,15 @@ SMALL_LLM_MODEL=your-small-llm
 SMALL_LLM_API_KEY=sk-your-small-llm-key
 
 # Root override (optional)
-# CLAWKB_ROOT=/path/to/clawkb_root
-# CLAWKB_DB=/path/to/clawkb.sqlite3
-# CLAWKB_ARTICLES_DIR=/path/to/articles
+# CLAWSQLITE_ROOT=/path/to/knowledge_root
+# CLAWSQLITE_DB=/path/to/knowledge.sqlite3
+# CLAWSQLITE_ARTICLES_DIR=/path/to/articles
 ```
 
-At runtime, callers are expected to configure the environment before
-invoking `clawsqlite knowledge ...` (or the `clawsqlite` CLI as a whole).
-In OpenClaw containers this is usually done via the agent’s env config
-rather than a local `.env` loader.
+At runtime, `clawsqlite knowledge ...` (and `python -m clawsqlite_cli`) will
+auto‑load a project‑level `.env` from the current working directory.
+Existing environment variables are **not** overridden. In OpenClaw containers
+this is usually done via the agent’s env config instead of editing `.env`.
 
 ### 4.3 Embedding configuration
 
@@ -204,18 +200,18 @@ Required env (typically via `.env`):
 - `EMBEDDING_MODEL` – model name used by your embedding endpoint
 - `EMBEDDING_BASE_URL` – base URL, e.g. `https://embed.example.com/v1`
 - `EMBEDDING_API_KEY` – bearer token
-- `CLAWKB_VEC_DIM` – embedding dimension (e.g. `1024` for BAAI/bge-m3)
+- `CLAWSQLITE_VEC_DIM` – embedding dimension (e.g. `1024` for BAAI/bge-m3)
 
 The knowledge app will:
 
 - Use these env vars in `clawsqlite_knowledge.embed.get_embedding()` (via httpx POST to `/v1/embeddings`)
-- Use `CLAWSQLITE_VEC_DIM` (or legacy `CLAWKB_VEC_DIM`) to define `embedding float[DIM]` in `articles_vec`
+- Use `CLAWSQLITE_VEC_DIM` to define `embedding float[DIM]` in `articles_vec`
 
 If any of these are missing, **vector features are treated as disabled**:
 
 - `embedding_enabled()` returns `False`
 - `ingest` will not call the embedding API
-- `search` in `mode=hybrid` will auto‑downgrade to FTS‑only
+- `search` in `mode=hybrid` will auto‑downgrade to FTS‑only and print a `NEXT` hint
 
 ### 4.4 Small LLM configuration (optional)
 
@@ -239,12 +235,12 @@ The knowledge app does **not** implement web scraping itself. For `--url`
 ingest it runs an external scraper command, configured via:
 
 - CLI: `--scrape-cmd`
-- Env: `CLAWSQLITE_SCRAPE_CMD` (preferred) or legacy `CLAWKB_SCRAPE_CMD`
+- Env: `CLAWSQLITE_SCRAPE_CMD`
 
 Recommended usage:
 
 ```env
-CLAWKB_SCRAPE_CMD="node /path/to/scrape.js --some-flag"
+CLAWSQLITE_SCRAPE_CMD="node /path/to/scrape.js --some-flag"
 ```
 
 The knowledge app will:
@@ -356,7 +352,7 @@ clawsqlite knowledge ingest \
 Semantics:
 
 - If a record with this `source_url` exists (and is not deleted), and `--update-existing` is set:
-  - Clawkb updates that record’s `title` / `summary` / `tags` / `category` / `priority`
+  - The knowledge app updates that record’s `title` / `summary` / `tags` / `category` / `priority`
   - Keeps the same `id`
   - Rewrites the markdown file
   - Updates FTS and vec indexes
@@ -384,7 +380,7 @@ Key options:
 - `--url` / `--text`
 - `--title`, `--summary`, `--tags`, `--category`, `--priority`
 - `--gen-provider {openclaw,llm,off}`
-- `--scrape-cmd` (or env `CLAWSQLITE_SCRAPE_CMD`/`CLAWKB_SCRAPE_CMD`)
+- `--scrape-cmd` (or env `CLAWSQLITE_SCRAPE_CMD`)
 - `--update-existing` (for URL mode)
 
 ### 6.2 search
@@ -438,6 +434,17 @@ understand whether vec features are actually usable for the current DB.
 
 ---
 
+### 6.5 maintenance
+
+```bash
+clawsqlite knowledge maintenance prune --days 3 --dry-run
+```
+
+This scans for orphaned files, old `.bak_*` backups, and broken DB paths.
+Use `--dry-run` to preview deletions; `maintenance gc` is an alias of `prune`.
+
+---
+
 ## 7. Notes on File Naming & Titles
 
 Markdown files are named:
@@ -447,10 +454,13 @@ Markdown files are named:
 ```
 
 - `id` comes from the `articles` table
-- `slugified-title` is a lowercase ASCII slug derived from the title
+- `slugified-title` is derived from the title:
+  - If `pypinyin` is available, CJK tokens are converted to pinyin;
+  - ASCII letters/digits are preserved; other symbols become `-`;
+  - Repeated `-` are collapsed; empty results fall back to `untitled`.
 
-For non‑Latin titles (e.g. Chinese), the slug may become less readable (e.g. `untitled`), but this
-does not affect functionality:
+For CJK titles, the filename is typically a pinyin‑based slug. If `pypinyin`
+is not installed, it may fall back to `untitled`. This does not affect functionality:
 
 - The real title is stored in the DB
 - Search operates on DB fields and FTS, not filenames
@@ -470,7 +480,7 @@ current format is stable and works well with existing tools.
 - 支持：
   - `ingest`：从 URL 或纯文本入库
   - `search`：FTS / 向量 / 混合模式
-  - `show` / `export` / `update` / `delete` / `reindex`
+  - `show` / `export` / `update` / `delete` / `reindex` / `maintenance`
 
 ### 快速开始
 

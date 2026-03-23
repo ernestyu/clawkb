@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Markdown storage for clawkb.
+Markdown storage for clawsqlite knowledge.
 """
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import os
 from typing import Optional
 from .utils import slugify
 
-DEFAULT_ARTICLES_DIR = "/home/node/.openclaw/workspace/clawkb/articles"
+DEFAULT_ARTICLES_DIR = "/home/node/.openclaw/workspace/clawsqlite/knowledge_data/articles"
 
 def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)

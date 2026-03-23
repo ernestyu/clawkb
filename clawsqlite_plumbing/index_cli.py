@@ -33,14 +33,25 @@ def _open_db(path: str) -> sqlite3.Connection:
     return conn
 
 
+def _fts_columns(conn: sqlite3.Connection, fts_table: str) -> list[str]:
+    """Return FTS column names in declared order (excluding rowid)."""
+    cols: list[str] = []
+    for row in conn.execute(f"PRAGMA table_info({fts_table})"):
+        name = row["name"]
+        if name:
+            cols.append(str(name))
+    return cols
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     conn = _open_db(args.db)
     try:
         base = args.table
+        id_col = args.id_col
         fts = args.fts_table
         vec = args.vec_table
 
-        base_ids = {row[0] for row in conn.execute(f"SELECT id FROM {base}")}
+        base_ids = {row[0] for row in conn.execute(f"SELECT {id_col} FROM {base}")}
 
         if fts:
             fts_ids = {row[0] for row in conn.execute(f"SELECT rowid FROM {fts}")}
@@ -77,14 +88,24 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
     conn = _open_db(args.db)
     try:
         base = args.table
+        id_col = args.id_col
         fts = args.fts_table
         vec = args.vec_table
 
         if fts:
+            cols = _fts_columns(conn, fts)
+            if not cols:
+                raise SystemExit(f"ERROR: could not discover columns for FTS table {fts}")
+            col_list = ", ".join(cols)
             conn.execute(f"DELETE FROM {fts}")
-            # naive content: concat columns as text; apps can define views if needed
-            conn.execute(f"INSERT INTO {fts}(rowid, title, tags, summary) SELECT id, title, tags, summary FROM {base}")
-            print(f"[OK] Rebuilt FTS index {fts} from {base}")
+            # Rebuild from base table columns that match FTS schema.
+            # If your base table uses different column names, create a view
+            # that aligns names and point --table to the view.
+            conn.execute(
+                f"INSERT INTO {fts}(rowid, {col_list}) "
+                f"SELECT {id_col}, {col_list} FROM {base}"
+            )
+            print(f"[OK] Rebuilt FTS index {fts} from {base} (id_col={id_col})")
 
         if vec:
             conn.execute(f"DELETE FROM {vec}")
@@ -126,6 +147,7 @@ def build_parser(prog: str = "clawsqlite index") -> argparse.ArgumentParser:
     p_check = sub.add_parser("check", help="Check FTS/vec index consistency")
     p_check.add_argument("--db", required=True, help="SQLite DB path")
     p_check.add_argument("--table", required=True, help="Base table name")
+    p_check.add_argument("--id-col", default="id", help="Primary key column in base table (default: id)")
     p_check.add_argument("--fts-table", help="FTS table name")
     p_check.add_argument("--vec-table", help="Vector table name")
     p_check.set_defaults(func=_cmd_check)
@@ -134,6 +156,7 @@ def build_parser(prog: str = "clawsqlite index") -> argparse.ArgumentParser:
     p_rebuild = sub.add_parser("rebuild", help="Rebuild FTS/vec indexes from base table")
     p_rebuild.add_argument("--db", required=True, help="SQLite DB path")
     p_rebuild.add_argument("--table", required=True, help="Base table name")
+    p_rebuild.add_argument("--id-col", default="id", help="Primary key column in base table (default: id)")
     p_rebuild.add_argument("--fts-table", help="FTS table name")
     p_rebuild.add_argument("--vec-table", help="Vector table name")
     p_rebuild.set_defaults(func=_cmd_rebuild)

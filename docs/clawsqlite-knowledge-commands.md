@@ -1,4 +1,4 @@
-# Knowledge CLI Commands (Current `clawkb` surface)
+# Knowledge CLI Commands (Current `clawsqlite knowledge` surface)
 
 This document inventories the existing `clawsqlite knowledge` CLI commands and classifies
 them as:
@@ -23,13 +23,20 @@ them as:
 
 Source: `clawsqlite_knowledge/cli.py`.
 
+Additional notes (current behavior):
+
+- `clawsqlite knowledge ...` auto-loads a project-level `.env` from the current working directory (does not override existing env vars).
+- When embeddings are not available:
+  - `search --mode hybrid` falls back to FTS-only and prints a `NEXT:` hint.
+  - `search --mode vec` returns an error and prints a `NEXT:` hint.
+
 ### 1.1 `ingest`
 
 **CLI:**
 
 ```bash
-clawkb ingest --url ...
-clawkb ingest --text ...
+clawsqlite knowledge ingest --url ...
+clawsqlite knowledge ingest --text ...
 ```
 
 **Description:**
@@ -54,13 +61,15 @@ clawkb ingest --text ...
 **CLI:**
 
 ```bash
-clawkb search "query" [--mode hybrid|fts|vec] [--category ...] [...]
+clawsqlite knowledge search "query" [--mode hybrid|fts|vec] [--category ...] [...]
 ```
 
 **Description:**
 
 - Opens the DB with FTS + vec enabled;
-- Checks whether the vec table exists; if not, downgrades to FTS-only;
+- Determines embedding availability (required env + vec0/vec table readiness):
+  - if `--mode vec` and embeddings are unavailable: exits non-zero and prints `NEXT:` guidance;
+  - if `--mode hybrid` and embeddings are unavailable: prints a `NEXT:` hint and falls back to FTS-only;
 - Calls `hybrid_search(...)` with:
   - query text;
   - search mode (hybrid/fts/vec);
@@ -86,7 +95,7 @@ clawkb search "query" [--mode hybrid|fts|vec] [--category ...] [...]
 **CLI:**
 
 ```bash
-clawkb show --id 123 [--full]
+clawsqlite knowledge show --id 123 [--full]
 ```
 
 **Description:**
@@ -110,7 +119,7 @@ clawkb show --id 123 [--full]
 **CLI:**
 
 ```bash
-clawkb export --id 123 --format md|json --out path [--full]
+clawsqlite knowledge export --id 123 --format md|json --out path [--full]
 ```
 
 **Description:**
@@ -136,7 +145,7 @@ clawkb export --id 123 --format md|json --out path [--full]
 **CLI:**
 
 ```bash
-clawkb update --id 123 [--title ...] [--summary ...] [--tags ...] \
+clawsqlite knowledge update --id 123 [--title ...] [--summary ...] [--tags ...] \
   [--category ...] [--priority ...] [--regen ...]
 ```
 
@@ -146,7 +155,10 @@ clawkb update --id 123 [--title ...] [--summary ...] [--tags ...] \
 - Applies patch fields: title/summary/tags/category/priority；
 - Optionally regens fields via generator (`--regen title|summary|tags|all`);
 - Updates DB row;
-- Syncs FTS and vec indexes for this article;
+- Syncs FTS index for this article;
+- Syncs vec index when embeddings are enabled and either:
+  - the summary changed, or
+  - `--regen embedding` / `--regen all` was explicitly requested.
 - For `regen` it may read the markdown file as the content source.
 
 **Classification:**
@@ -163,7 +175,7 @@ clawkb update --id 123 [--title ...] [--summary ...] [--tags ...] \
 **CLI:**
 
 ```bash
-clawkb delete --id 123 [--hard] [--remove-file]
+clawsqlite knowledge delete --id 123 [--hard] [--remove-file]
 ```
 
 **Description:**
@@ -192,7 +204,7 @@ clawkb delete --id 123 [--hard] [--remove-file]
 **CLI:**
 
 ```bash
-clawkb reindex --check | --fix-missing | --rebuild [--fts] [--vec]
+clawsqlite knowledge reindex --check | --fix-missing | --rebuild [--fts] [--vec]
 ```
 
 **Description:**
@@ -206,25 +218,51 @@ clawkb reindex --check | --fix-missing | --rebuild [--fts] [--vec]
     - calls `reindex_mod.fix_missing(...)` to fill missing fields and
       index rows (may invoke generator/embedding);
   - `--rebuild`:
-    - calls `reindex_mod.rebuild(...)` to rebuild FTS and/or vec indexes.
+    - for `--fts`: the knowledge CLI typically delegates to plumbing (`clawsqlite index rebuild`) to rebuild FTS;
+    - for `--vec`: clears the vec table only (does **not** recompute embeddings).
 
 **Classification:**
 
 - Mixed:
   - `--rebuild --fts/--vec` is a **plumbing wrapper candidate** → should be
     refactored to call `clawsqlite index check/rebuild` with fixed
-    `--table` / `--fts-col` / `--vec-col`.
+    `--table` / `--id-col` / `--fts-table` / `--vec-table`.
   - `--check` / `--fix-missing` involve KB-specific field generation and
     are **application-level**.
 
 ---
 
-### 1.8 `maintenance`
+### 1.8 `embed-from-summary`
 
 **CLI:**
 
 ```bash
-clawkb maintenance prune|gc --days N [--dry-run]
+clawsqlite knowledge embed-from-summary [--where ...] [--limit ...] [--offset ...]
+```
+
+**Description:**
+
+- Knowledge-level wrapper around the plumbing embedding primitive (`clawsqlite embed column`);
+- Uses the default KB schema:
+  - base table: `articles`
+  - id column: `id`
+  - text column: `summary`
+  - vec table: `articles_vec`
+  - default WHERE: `deleted_at IS NULL AND summary IS NOT NULL AND trim(summary) != ''`
+- Supports `--where/--limit/--offset` for batching.
+
+**Classification:**
+
+- **Plumbing wrapper candidate** – thin knowledge wrapper around a generic embedding primitive.
+
+---
+
+### 1.9 `maintenance`
+
+**CLI:**
+
+```bash
+clawsqlite knowledge maintenance prune|gc --days N [--dry-run]
 ```
 
 **Description:**
@@ -243,8 +281,8 @@ clawkb maintenance prune|gc --days N [--dry-run]
 
 - The core logic is a **plumbing wrapper candidate** and maps naturally to
   `clawsqlite fs list-orphans` + `clawsqlite fs gc`:
-  - scanning `articles_dir` vs DB paths；
-  - deciding which `.bak_` files to delete；
+  - scanning `articles_dir` vs DB paths;
+  - deciding which `.bak_` files to delete;
   - reporting orphans / broken records.
 - The specific `.bak_deleted_` naming and retention policy may stay in the
   `knowledge` layer, but the generic FS+DB GC logic should move into
@@ -267,13 +305,13 @@ In short:
   - `reindex --fix-missing`
 
 - **Plumbing wrapper candidates (should be rebuilt using `db/index/fs`):**
-  - `reindex --rebuild [--fts] [--vec]` → `index check` + `index rebuild`
-  - `maintenance` (prune/gc) → `fs list-orphans` + `fs gc` + (`db vacuum` as needed)
+  - `embed-from-summary` -> `embed column` with KB defaults
+  - `reindex --rebuild [--fts] [--vec]` -> `index check` + `index rebuild`
+  - `maintenance` (prune/gc) -> `fs list-orphans` + `fs gc` (+ `db vacuum` as needed)
 
-Future work during the refactor will:
+Future work during the refactor can:
 
-- introduce `clawsqlite knowledge ...` as the new namespace for these
+- keep `clawsqlite knowledge ...` as the namespace for these
   commands;
-- implement the `db/index/fs` plumbing layer; and
-- gradually rewrite the plumbing wrapper candidates to call the new
-  primitives.
+- keep expanding the `db/index/fs/embed` plumbing layer; and
+- gradually rewrite wrapper candidates to call those primitives.

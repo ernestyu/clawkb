@@ -13,7 +13,8 @@ Optional extensions
 
 Degradation
 - If tokenizer is missing: create articles_fts without tokenize='simple'.
-- If vec0 is missing: skip creating articles_vec; vec features become unavailable.
+- If vec0 is missing or CLAWSQLITE_VEC_DIM is unset/invalid: skip creating
+  articles_vec; vec features become unavailable.
 """
 from __future__ import annotations
 
@@ -24,15 +25,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .utils import now_iso_z
 
-# New defaults for clawsqlite_knowledge; keep legacy envs as fallbacks.
-DEFAULT_DB_PATH = os.environ.get(
-    "CLAWSQLITE_DB_DEFAULT",
-    os.environ.get("CLAWKB_DB_DEFAULT", "knowledge.sqlite3"),
-)
-DEFAULT_TOKENIZER_EXT = os.environ.get(
-    "CLAWSQLITE_TOKENIZER_EXT_DEFAULT",
-    os.environ.get("CLAWKB_TOKENIZER_EXT_DEFAULT", "/usr/local/lib/libsimple.so"),
-)
+# Defaults for clawsqlite_knowledge.
+DEFAULT_DB_PATH = os.environ.get("CLAWSQLITE_DB_DEFAULT", "knowledge.sqlite3")
+DEFAULT_TOKENIZER_EXT = os.environ.get("CLAWSQLITE_TOKENIZER_EXT_DEFAULT", "/usr/local/lib/libsimple.so")
 
 _VEC_GLOBS = [
     "/app/node_modules/**/vec0.so",
@@ -83,12 +78,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
 );
 """
 
-def _vec_schema() -> str:
-    dim_env = os.environ.get("CLAWKB_VEC_DIM")
+def _vec_schema() -> Optional[str]:
+    dim_env = os.environ.get("CLAWSQLITE_VEC_DIM")
+    if not dim_env:
+        return None
     try:
-        dim = int(dim_env) if dim_env else 1536
+        dim = int(dim_env)
     except Exception:
-        dim = 1536
+        return None
+    if dim <= 0:
+        return None
     return f"""
 CREATE VIRTUAL TABLE IF NOT EXISTS articles_vec USING vec0(
   id INTEGER PRIMARY KEY,
@@ -152,7 +151,9 @@ def open_db(
     tokenizer_ext: Optional[str] = None,
     vec_ext: Optional[str] = None,
 ) -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON;")
@@ -161,12 +162,7 @@ def open_db(
     conn.executescript(BASE_SCHEMA_SQL)
 
     if need_fts:
-        ext = (
-            tokenizer_ext
-            or os.environ.get("CLAWSQLITE_TOKENIZER_EXT")
-            or os.environ.get("CLAWKB_TOKENIZER_EXT")
-            or DEFAULT_TOKENIZER_EXT
-        )
+        ext = tokenizer_ext or os.environ.get("CLAWSQLITE_TOKENIZER_EXT") or DEFAULT_TOKENIZER_EXT
         tokenizer_loaded = False
         if ext and ext.lower() != "none":
             tokenizer_loaded = _try_load_ext(conn, ext)
@@ -184,18 +180,15 @@ def open_db(
             conn.executescript(FTS_SCHEMA_FALLBACK)
 
     if need_vec:
-        ext = (
-            vec_ext
-            or os.environ.get("CLAWSQLITE_VEC_EXT")
-            or os.environ.get("CLAWKB_VEC_EXT")
-            or _find_vec0_so()
-        )
+        ext = vec_ext or os.environ.get("CLAWSQLITE_VEC_EXT") or _find_vec0_so()
         if ext and ext.lower() != "none":
             _try_load_ext(conn, ext)
-        try:
-            conn.executescript(_vec_schema())
-        except Exception:
-            pass
+        schema = _vec_schema()
+        if schema:
+            try:
+                conn.executescript(schema)
+            except Exception:
+                pass
 
     conn.commit()
     return conn

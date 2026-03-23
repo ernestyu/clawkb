@@ -1,37 +1,37 @@
 ---
-name: clawkb
-description: OpenClaw-facing skill for the Clawkb knowledge base. Provides URL ingest, full-text / vector search, and basic maintenance via the ./bin/clawkb entrypoint.
+name: clawsqlite-knowledge
+description: OpenClaw-facing skill for the clawsqlite knowledge base. Provides URL ingest, full-text / vector search, and basic maintenance via the ./bin/clawsqlite knowledge entrypoint.
 ---
 
-# Skill: Clawkb (local Markdown + SQLite knowledge base)
+# Skill: clawsqlite knowledge (local Markdown + SQLite knowledge base)
 
-This skill describes how an OpenClaw agent should interact with a Clawkb
+This skill describes how an OpenClaw agent should interact with a clawsqlite knowledge
 instance that lives on the same machine.
 
 > **Assumptions:**
-> - The Clawkb repo has been cloned (e.g. under `/home/node/.openclaw/workspace/Clawkb`).
+> - The clawsqlite knowledge repo has been cloned (e.g. under `/home/node/.openclaw/workspace/clawsqlite`).
 > - A project-level `.env` exists in the repo root with embedding / vec /
 >   scraper configuration.
 > - The agent can run shell commands on the host.
 
 ## 1. Critical paths
 
-- **Project root**: `<PATH_TO_CLAWKB_REPO>`
-- **Data root (default)**: `<PATH_TO_CLAWKB_REPO>/clawkb_data`
-- **DB path (default)**: `<PATH_TO_CLAWKB_REPO>/clawkb_data/clawkb.sqlite3`
-- **Articles dir (default)**: `<PATH_TO_CLAWKB_REPO>/clawkb_data/articles/`
+- **Project root**: `<PATH_TO_CLAWSQLITE_REPO>`
+- **Data root (default)**: `<PATH_TO_CLAWSQLITE_REPO>/knowledge_data`
+- **DB path (default)**: `<PATH_TO_CLAWSQLITE_REPO>/knowledge_data/knowledge.sqlite3`
+- **Articles dir (default)**: `<PATH_TO_CLAWSQLITE_REPO>/knowledge_data/articles/`
 
-Most of these defaults can be overridden via `.env` (`CLAWKB_ROOT`,
-`CLAWKB_DB`, `CLAWKB_ARTICLES_DIR`), but an agent should treat them as
-implementation details and always go through `./bin/clawkb`.
+Most of these defaults can be overridden via `.env` (`CLAWSQLITE_ROOT`,
+`CLAWSQLITE_DB`, `CLAWSQLITE_ARTICLES_DIR`), but an agent should treat them as
+implementation details and always go through `./bin/clawsqlite knowledge`.
 
 ## 2. Environment requirements
 
 The only environment variable an agent should set inline is the Python
-interpreter to use for Clawkb (if the system default is not correct):
+interpreter to use for clawsqlite knowledge (if the system default is not correct):
 
 ```bash
-export CLAWKB_PYTHON=/opt/venv/bin/python
+export CLAWSQLITE_PYTHON=/opt/venv/bin/python
 ```
 
 All other configuration (embedding endpoints, vec extension path, scraper
@@ -43,14 +43,14 @@ humans / ops, not by the agent.
 All operations MUST go through the shell entrypoint:
 
 ```bash
-cd <PATH_TO_CLAWKB_REPO>
-./bin/clawkb <subcommand> [args...]
+cd <PATH_TO_CLAWSQLITE_REPO>
+./bin/clawsqlite knowledge <subcommand> [args...]
 ```
 
 Examples below assume the repo lives at:
 
 ```text
-/home/node/.openclaw/workspace/Clawkb
+/home/node/.openclaw/workspace/clawsqlite
 ```
 
 ## 4. Protocols
@@ -60,9 +60,9 @@ Examples below assume the repo lives at:
 Ingest by URL (scraper and embedding config are taken from `.env`):
 
 ```bash
-cd /home/node/.openclaw/workspace/Clawkb
-CLAWKB_PYTHON=/opt/venv/bin/python \
-  ./bin/clawkb ingest \
+cd /home/node/.openclaw/workspace/clawsqlite
+CLAWSQLITE_PYTHON=/opt/venv/bin/python \
+  ./bin/clawsqlite knowledge ingest \
     --url "https://example.com/article" \
     --category "web" \
     --json
@@ -79,9 +79,9 @@ Notes:
 Search for relevant articles using the default hybrid mode:
 
 ```bash
-cd /home/node/.openclaw/workspace/Clawkb
-CLAWKB_PYTHON=/opt/venv/bin/python \
-  ./bin/clawkb search "<QUERY_TEXT>" --json
+cd /home/node/.openclaw/workspace/clawsqlite
+CLAWSQLITE_PYTHON=/opt/venv/bin/python \
+  ./bin/clawsqlite knowledge search "<QUERY_TEXT>" --json
 ```
 
 The agent should parse the JSON output to retrieve:
@@ -90,7 +90,7 @@ The agent should parse the JSON output to retrieve:
 - `score` – relevance score
 - `title`, `summary`, `category`, `tags`
 
-If vector search is disabled (no embedding config), Clawkb will
+If vector search is disabled (no embedding config), clawsqlite knowledge will
 automatically fall back to FTS-only search.
 
 ### 4.3 Show a record
@@ -98,9 +98,9 @@ automatically fall back to FTS-only search.
 To inspect a single record:
 
 ```bash
-cd /home/node/.openclaw/workspace/Clawkb
-CLAWKB_PYTHON=/opt/venv/bin/python \
-  ./bin/clawkb show --id <ID> --full
+cd /home/node/.openclaw/workspace/clawsqlite
+CLAWSQLITE_PYTHON=/opt/venv/bin/python \
+  ./bin/clawsqlite knowledge show --id <ID> --full
 ```
 
 - `--full` includes the Markdown content in the output.
@@ -111,9 +111,9 @@ CLAWKB_PYTHON=/opt/venv/bin/python \
 Patch title/summary/tags:
 
 ```bash
-cd /home/node/.openclaw/workspace/Clawkb
-CLAWKB_PYTHON=/opt/venv/bin/python \
-  ./bin/clawkb update \
+cd /home/node/.openclaw/workspace/clawsqlite
+CLAWSQLITE_PYTHON=/opt/venv/bin/python \
+  ./bin/clawsqlite knowledge update \
     --id <ID> \
     --title "New Title" \
     --summary "New long summary" \
@@ -124,9 +124,9 @@ CLAWKB_PYTHON=/opt/venv/bin/python \
 Regenerate summary/tags using the configured provider:
 
 ```bash
-cd /home/node/.openclaw/workspace/Clawkb
-CLAWKB_PYTHON=/opt/venv/bin/python \
-  ./bin/clawkb update \
+cd /home/node/.openclaw/workspace/clawsqlite
+CLAWSQLITE_PYTHON=/opt/venv/bin/python \
+  ./bin/clawsqlite knowledge update \
     --id <ID> \
     --regen summary \
     --gen-provider openclaw \
@@ -136,9 +136,9 @@ CLAWKB_PYTHON=/opt/venv/bin/python \
 Regenerate embedding only:
 
 ```bash
-cd /home/node/.openclaw/workspace/Clawkb
-CLAWKB_PYTHON=/opt/venv/bin/python \
-  ./bin/clawkb update \
+cd /home/node/.openclaw/workspace/clawsqlite
+CLAWSQLITE_PYTHON=/opt/venv/bin/python \
+  ./bin/clawsqlite knowledge update \
     --id <ID> \
     --regen embedding \
     --json
@@ -149,9 +149,9 @@ CLAWKB_PYTHON=/opt/venv/bin/python \
 Soft delete (mark as deleted, keep data for maintenance):
 
 ```bash
-cd /home/node/.openclaw/workspace/Clawkb
-CLAWKB_PYTHON=/opt/venv/bin/python \
-  ./bin/clawkb delete --id <ID>
+cd /home/node/.openclaw/workspace/clawsqlite
+CLAWSQLITE_PYTHON=/opt/venv/bin/python \
+  ./bin/clawsqlite knowledge delete --id <ID>
 ```
 
 Agents should prefer soft delete; physical cleanup can be done by humans
@@ -162,25 +162,25 @@ or scheduled maintenance commands.
 Basic index maintenance:
 
 ```bash
-cd /home/node/.openclaw/workspace/Clawkb
-CLAWKB_PYTHON=/opt/venv/bin/python \
-  ./bin/clawkb reindex --check --fix
+cd /home/node/.openclaw/workspace/clawsqlite
+CLAWSQLITE_PYTHON=/opt/venv/bin/python \
+  ./bin/clawsqlite knowledge reindex --check --fix
 ```
 
 > Note: A dedicated `status` subcommand may be added in future versions of
-> Clawkb to summarise DB health and coverage. For now, agents can infer
+> clawsqlite knowledge to summarise DB health and coverage. For now, agents can infer
 > health from the success/failure of `reindex --check` and basic `search`
 > calls.
 
 ## 5. Sovereignty rules (for agents)
 
-1. **Single entrypoint**: Do not call `python -m clawkb` directly; always use
-   `./bin/clawkb` from the repo root.
-2. **Zero ad-hoc exports**: Only set `CLAWKB_PYTHON` when needed. All other
+1. **Single entrypoint**: Do not call `python -m clawsqlite knowledge` directly; always use
+   `./bin/clawsqlite knowledge` from the repo root.
+2. **Zero ad-hoc exports**: Only set `CLAWSQLITE_PYTHON` when needed. All other
    environment configuration must come from `.env`.
 3. **No direct DB writes**: Do not manipulate the SQLite files directly;
    always go through the CLI.
 
 With this protocol, a new agent can obtain full operational control over a
-Clawkb instance by learning a small, stable set of shell commands, without
+clawsqlite knowledge instance by learning a small, stable set of shell commands, without
 needing to know the internal schema or Python package layout.

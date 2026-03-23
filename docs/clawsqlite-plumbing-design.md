@@ -1,14 +1,14 @@
 # clawsqlite Plumbing Layer Design
 
-This document describes the proposed **"plumbing" layer** for the
+This document describes the **"plumbing" layer** for the
 `clawsqlite` CLI – low-level, generic commands around SQLite, full-text
 / vector indexes, and the associated filesystem layout.
 
 These commands are intended to be:
 
-- **Generic** – usable by multiple applications (KB, reading, future apps);
+- **Generic** – usable by multiple applications (knowledge, reading, future apps);
 - **Predictable** – do one thing, with clear input/output;
-- **Composable** – higher-level "porcelain" commands (e.g. `clawsqlite kb`
+- **Composable** – higher-level "porcelain" commands (e.g. `clawsqlite knowledge`
   or `clawsqlite reading`) should be able to call them internally.
 
 The CLI layout is:
@@ -17,7 +17,7 @@ The CLI layout is:
 clawsqlite db ...      # raw SQLite operations (schema/exec/backup/vacuum)
 clawsqlite index ...   # generic FTS / vector index operations
 clawsqlite fs ...      # filesystem + DB consistency helpers
-clawsqlite embed ...   # embedding primitives (text → vector tables)
+clawsqlite embed ...   # embedding primitives (text -> vector tables)
 ```
 
 Below, each command is described with:
@@ -105,7 +105,7 @@ clawsqlite db exec --db ~/.clawsqlite/knowledge.db \
 clawsqlite db exec --db ~/.clawsqlite/knowledge.db --file migrations/001_add_flags.sql
 ```
 
-> NOTE: This is plumbing. Application-level commands (e.g. `kb migrate`)
+> NOTE: This is plumbing. Application-level commands (e.g. `clawsqlite knowledge ...`)
 > should wrap specific migrations instead of asking users to type raw SQL.
 
 ---
@@ -246,37 +246,39 @@ Checks index consistency for a given table:
 clawsqlite index check \
   --db PATH \
   --table NAME \
-  [--fts-col NAME] \
-  [--vec-col NAME]
+  [--id-col NAME] \
+  [--fts-table NAME] \
+  [--vec-table NAME]
 ```
 
 - `--db PATH` – database file
 - `--table NAME` – base table name (e.g. `articles`)
-- `--fts-col NAME` – optional, FTS index column name
-- `--vec-col NAME` – optional, vector index column name
+- `--id-col NAME` – optional, primary key column in base table (default: `id`)
+- `--fts-table NAME` – optional, FTS virtual table name (rowid = base id)
+- `--vec-table NAME` – optional, vector table name (must have `id` column)
 
 **Examples**
 
 ```bash
-# Check FTS index for articles.content_fts
+# Check FTS index for articles_fts
 clawsqlite index check \
   --db ~/.clawsqlite/knowledge.db \
   --table articles \
-  --fts-col content_fts
+  --fts-table articles_fts
 
 # Check both FTS and vector index
 clawsqlite index check \
   --db ~/.clawsqlite/knowledge.db \
   --table articles \
-  --fts-col content_fts \
-  --vec-col embedding
+  --fts-table articles_fts \
+  --vec-table articles_vec
 ```
 
 Output could be a short report:
 
 ```text
-[OK] FTS index matches base table (1234 rows)
-[OK] Vector index matches base table (1234 rows)
+[OK] FTS index articles_fts matches base table articles (1234 rows)
+[OK] Vec index articles_vec matches base table articles (1234 rows)
 ```
 
 or detailed warnings if mismatches are found.
@@ -302,8 +304,9 @@ current base data.
 clawsqlite index rebuild \
   --db PATH \
   --table NAME \
-  [--fts-col NAME] \
-  [--vec-col NAME]
+  [--id-col NAME] \
+  [--fts-table NAME] \
+  [--vec-table NAME]
 ```
 
 **Examples**
@@ -313,44 +316,42 @@ clawsqlite index rebuild \
 clawsqlite index rebuild \
   --db ~/.clawsqlite/knowledge.db \
   --table articles \
-  --fts-col content_fts
+  --fts-table articles_fts
 
-# Rebuild both FTS and vector index
+# Rebuild FTS and clear the vector index (application must refill embeddings)
 clawsqlite index rebuild \
   --db ~/.clawsqlite/knowledge.db \
   --table articles \
-  --fts-col content_fts \
-  --vec-col embedding
+  --fts-table articles_fts \
+  --vec-table articles_vec
 ```
 
-> Application-level commands like `kb reindex` would typically wrap this
-> with fixed `--table` / `--fts-col` / `--vec-col` arguments.
+> NOTE: `--vec-table` rebuild currently means **clear** (DELETE) only; plumbing
+> does not know how to recompute embeddings.
+>
+> Application-level commands like `clawsqlite knowledge reindex` typically wrap
+> this with fixed `--table` / `--id-col` / `--fts-table` / `--vec-table`
+> arguments.
 
 ---
 
-### 2.3 `clawsqlite index search` (optional core)
+### 2.3 `clawsqlite index search` (FTS-only primitive)
 
 **What it does**
 
-Provides a **generic search primitive** on top of FTS and/or vector indexes.
-It is intentionally low-level and only cares about:
+Provides a **generic FTS search primitive** on top of an FTS5 table.
 
-- "给我一个查询字符串"
-- "告诉我 FTS / 向量索引用的是哪一套"
-- "我给你按分数排好的一组 rowid + 分数"
+Current implementation in this repo is intentionally small:
 
-不关心 `title/category/priority` 等业务字段。
+- FTS-only (BM25) ranking;
+- emits JSON lines: one object per match, containing `rowid` and `fts_score`;
+- does not implement vector or hybrid search at the plumbing layer yet.
 
-内部可以支持三种模式（具体策略由实现决定）：
+Application-level commands (e.g. `clawsqlite knowledge search`) are responsible
+for:
 
-1. **FTS-only** – 只用 FTS5 做 BM25 排序；
-2. **Vec-only** – 只用向量相似度排序；
-3. **Hybrid** – FTS + 向量分数做一个混合分数。
-
-上层（`kb search` / `reading search`）决定：
-
-- 这次要用哪种模式；
-- 怎么解释这些 rowid（从哪张表 SELECT 出标题/摘要等）。
+- deciding the overall retrieval strategy (FTS / vec / hybrid);
+- joining `rowid` back to the base table and formatting user output.
 
 **Signature**
 
@@ -358,8 +359,7 @@ It is intentionally low-level and only cares about:
 clawsqlite index search \
   --db PATH \
   --table NAME \
-  [--fts-col NAME] \
-  [--vec-col NAME] \
+  --fts-table NAME \
   --query STRING \
   [--limit N]
 ```
@@ -367,29 +367,30 @@ clawsqlite index search \
 **Examples**
 
 ```bash
-# Hybrid search on articles
+# FTS search on articles_fts
 clawsqlite index search \
   --db ~/.clawsqlite/knowledge.db \
   --table articles \
-  --fts-col content_fts \
-  --vec-col embedding \
+  --fts-table articles_fts \
   --query "LLM quantization" \
   --limit 20
 ```
 
-Output (for plumbing) could be JSON lines (one per match):
+Output is JSON lines (one per match):
 
 ```json
-{"rowid": 123, "fts_score": 1.23, "vec_score": 0.87, "hybrid_score": 0.95}
-{"rowid": 45,  "fts_score": 0.98, "vec_score": 0.90, "hybrid_score": 0.94}
-...
+{"rowid": 123, "fts_score": 1.23}
+{"rowid": 45,  "fts_score": 0.98}
 ```
 
 Application-level search commands would then:
 
 - read these row IDs;
 - join with the base table to fetch titles, categories, etc.;
-- format user-facing output（比如按 hybrid_score 排序后打印 title/summary）。
+- format user-facing output（比如按 fts_score 排序后打印 title/summary）。
+
+Future work (not implemented yet) can extend `clawsqlite index search` to support
+vector/hybrid scoring once the plumbing layer grows a stable interface for that.
 
 ---
 
@@ -444,9 +445,9 @@ clawsqlite fs list-orphans \
 **Examples**
 
 ```bash
-# List orphans for KB articles
+# List orphans for content files
 clawsqlite fs list-orphans \
-  --root ~/kb/articles \
+  --root ~/myapp/articles \
   --db ~/.clawsqlite/knowledge.db \
   --table articles \
   --path-col relpath
@@ -456,7 +457,7 @@ Output could be a simple report:
 
 ```text
 [FS_ONLY] articles/old-note-1.md
-[DB_ONLY] rowid=42 path="articles/missing-note.md"
+[DB_ONLY] articles/missing-note.md
 ```
 
 ---
@@ -494,7 +495,7 @@ clawsqlite fs gc \
 ```bash
 # Dry-run: see what would be cleaned up
 clawsqlite fs gc \
-  --root ~/kb/articles \
+  --root ~/myapp/articles \
   --db ~/.clawsqlite/knowledge.db \
   --table articles \
   --path-col relpath \
@@ -504,7 +505,7 @@ clawsqlite fs gc \
 
 # Actual cleanup
 clawsqlite fs gc \
-  --root ~/kb/articles \
+  --root ~/myapp/articles \
   --db ~/.clawsqlite/knowledge.db \
   --table articles \
   --path-col relpath \
@@ -512,12 +513,15 @@ clawsqlite fs gc \
   --delete-db-orphans
 ```
 
-Application-level commands like `kb maintenance` could wrap this with
+Application-level commands like `clawsqlite knowledge maintenance` could wrap this with
 predefined `--root` / `--table` / `--path-col` values.
 
 ---
 
-### 3.3 `clawsqlite fs reconcile` (optional)
+### 3.3 `clawsqlite fs reconcile` (planned; not implemented yet)
+
+> NOTE: This command is a design sketch only. It is **not implemented** in
+> `clawsqlite_plumbing/fs_cli.py` today.
 
 **What it does**
 
@@ -552,7 +556,7 @@ clawsqlite fs reconcile \
 ```bash
 # Create empty files for DB rows whose content files are missing
 clawsqlite fs reconcile \
-  --root ~/kb/articles \
+  --root ~/myapp/articles \
   --db ~/.clawsqlite/knowledge.db \
   --table articles \
   --path-col relpath \
@@ -560,7 +564,7 @@ clawsqlite fs reconcile \
 
 # Register orphan files into an 'import_queue' table (hypothetical)
 clawsqlite fs reconcile \
-  --root ~/kb/articles \
+  --root ~/myapp/articles \
   --db ~/.clawsqlite/knowledge.db \
   --table articles \
   --path-col relpath \
@@ -572,37 +576,82 @@ once KB/reading use-cases are clearer, but the CLI surface stays generic.
 
 ---
 
-## 4. How applications would use this
+## 4. `clawsqlite embed` – embedding primitives
 
-- **Knowledge app (`clawsqlite knowledge ...`)**:
-  - `knowledge reindex` → wraps `index check` + `index rebuild` with fixed table/cols;
-  - `knowledge maintenance` → wraps `fs gc` + `db vacuum` + `index check`;
-  - `knowledge search` → internally calls `index search` then joins `rowid` to
-    `articles` table.
+These commands provide low-level embedding utilities that can be reused by
+applications.
 
-- **Reading app (`clawsqlite reading ...`)**:
-  - `reading ingest-epub` → writes rows to a `reading_items` table, then
-    calls `index rebuild` for that table;
-  - `reading maintenance` → wraps `fs gc` for the reading root.
+### 4.1 `clawsqlite embed column`
 
-This way, **all the knowledge/reading-specific verbs** stay under their own
-namespaces (`knowledge`, `reading`), while the low-level DB/FS/index
-machinery is consolidated and reusable.
+**What it does**
+
+Embeds a text column from a base table into a vector table, using the configured
+embedding service (OpenAI-compatible).
+
+This is a plumbing primitive: it does not know about KB semantics; it only
+knows:
+
+- `--table` + `--id-col`
+- `--text-col` (the text to embed)
+- `--vec-table` (destination table with `id` + `embedding`)
+
+**Signature**
+
+```bash
+clawsqlite embed column \
+  --db PATH \
+  --table NAME \
+  --id-col NAME \
+  --text-col NAME \
+  --vec-table NAME \
+  [--where SQL] \
+  [--limit N] \
+  [--offset N]
+```
+
+**Examples**
+
+```bash
+# Embed article summaries into articles_vec
+clawsqlite embed column \
+  --db ~/.clawsqlite/knowledge.db \
+  --table articles \
+  --id-col id \
+  --text-col summary \
+  --vec-table articles_vec \
+  --where "deleted_at IS NULL AND summary IS NOT NULL AND trim(summary) != ''"
+```
 
 ---
 
-## 5. Refactor roadmap (implementation plan)
+## 5. How applications use this (current + future)
+
+- **Knowledge app (`clawsqlite knowledge ...`)** (implemented in this repo):
+  - `knowledge reindex --rebuild --fts` uses plumbing `clawsqlite index rebuild` (FTS only).
+  - `knowledge reindex --rebuild --vec` clears `articles_vec` only; embeddings are refilled via `knowledge embed-from-summary`.
+  - `knowledge embed-from-summary` is a thin wrapper around plumbing `clawsqlite embed column` with KB defaults.
+  - `knowledge maintenance prune|gc` performs KB-specific file/DB maintenance and may run plumbing `clawsqlite db vacuum` best-effort.
+  - `knowledge search` is application-level search/ranking logic; it does not call a plumbing `index search` primitive today.
+
+- **Reading app (`clawsqlite reading ...`)** (future):
+  - A reading app can reuse `db/index/fs/embed` plumbing commands, but is not implemented in this repository.
+
+This keeps application-specific semantics in their namespaces (`knowledge`, `reading`) while sharing low-level DB/FS/index machinery.
+
+---
+
+## 6. Refactor roadmap (implementation plan)
 
 This section is an explicit checklist for refactoring the existing
-`clawkb` CLI into the new `clawsqlite` structure.
+knowledge CLI into the new `clawsqlite` structure.
 
-### 5.1 Step 0 – Inventory current commands
+### 6.1 Step 0 – Inventory current commands
 
 Goal: get a clear map of what exists today.
 
 Actions:
 
-1. In `clawkb/cli.py`, list all current commands in a table, e.g.:
+1. In `clawsqlite_knowledge/cli.py`, list all current commands in a table, e.g.:
 
    | Command                      | Description                              |
    |------------------------------|------------------------------------------|
@@ -625,51 +674,27 @@ This inventory table should live in a separate doc, e.g.
 
 ---
 
-### 5.2 Step 1 – Establish CLI namespaces (no behavior change)
+### 6.2 Step 1 – Establish CLI namespaces (implemented)
 
-Goal: introduce the new top-level structure without changing behavior.
+Current status in this repository:
 
-Actions:
-
-1. Add a new top-level command group:
-
-   ```bash
-   clawsqlite knowledge ...
-   ```
-
-   Internally, this can initially delegate to the existing `kb`
-   implementation so that:
-
-   ```bash
-   clawsqlite knowledge search
-   ```
-
-   behaves the same as:
-
-   ```bash
-   clawsqlite kb search
-   ```
-
-2. Decide whether to keep `kb` as a short alias for power users, but treat
-   `knowledge` as the **primary** namespace in docs and skills.
-
-3. Reserve the other namespaces (no implementation yet):
-
-   ```bash
-   clawsqlite db ...
-   clawsqlite index ...
-   clawsqlite fs ...
-   clawsqlite reading ...   # future
-   ```
+1. `clawsqlite knowledge ...` is the primary application namespace.
+2. There is no `clawsqlite kb` alias.
+3. Plumbing namespaces are implemented: `clawsqlite db`, `clawsqlite index`, `clawsqlite fs`, `clawsqlite embed`.
+4. Future namespaces can be added (e.g. `clawsqlite reading ...`).
 
 ---
 
-### 5.3 Step 2 – Implement minimal plumbing commands
+### 6.3 Step 2 – Implement minimal plumbing commands (implemented)
 
-Goal: get the **core plumbing** commands working so application commands
-can start wrapping them.
+The **core plumbing** commands are implemented in `clawsqlite_plumbing/*` and exposed under:
 
-Recommended initial set:
+- `clawsqlite db ...`
+- `clawsqlite index ...`
+- `clawsqlite fs ...`
+- `clawsqlite embed ...`
+
+The implemented set includes:
 
 - `clawsqlite db`:
   - `db schema`
@@ -686,7 +711,7 @@ Recommended initial set:
 - `clawsqlite fs`:
   - `fs list-orphans`
   - `fs gc`
-  - (optional) `fs reconcile`
+  - (planned) `fs reconcile` (not implemented yet)
 
 Checklist for this step:
 
@@ -694,11 +719,11 @@ Checklist for this step:
 2. Add examples to the doc (this file) and smoke tests / examples under
    `examples/`.
 3. Ensure they do not depend on KB-specific schema beyond the parameters
-   provided (`--table`, `--fts-col`, `--vec-col`, `--path-col`, etc.).
+   provided (`--table`, `--id-col`, `--fts-table`, `--vec-table`, `--path-col`, etc.).
 
 ---
 
-### 5.4 Step 3 – Migrate knowledge commands to use plumbing
+### 6.4 Step 3 – Migrate knowledge commands to use plumbing
 
 Goal: refactor existing KB commands to call `db/index/fs` internally.
 
@@ -708,7 +733,7 @@ Examples:
 
   - Before: custom Python code that directly rebuilds FTS/vec indexes.
   - After: wrapper around `index check` + `index rebuild` with fixed
-    `--table`/`--fts-col`/`--vec-col`.
+    `--table`/`--id-col`/`--fts-table`/`--vec-table`.
 
 - `knowledge maintenance`:
 
@@ -733,7 +758,7 @@ Notes:
 
 ---
 
-### 5.5 Step 4 – Documentation and skill alignment
+### 6.5 Step 4 – Documentation and skill alignment
 
 Goal: align docs and OpenClaw skills with the new structure.
 

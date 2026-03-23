@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Search logic for clawkb: vec / fts / hybrid.
+Search logic for clawsqlite knowledge: vec / fts / hybrid.
 """
 from __future__ import annotations
 

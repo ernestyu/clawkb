@@ -109,7 +109,9 @@ def _cmd_backup(args: argparse.Namespace) -> int:
     else:
         dst = out
 
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    dst_dir = os.path.dirname(dst)
+    if dst_dir:
+        os.makedirs(dst_dir, exist_ok=True)
     shutil.copy2(src, dst)
     sys.stdout.write(f"Backup written to {dst}\n")
     return 0

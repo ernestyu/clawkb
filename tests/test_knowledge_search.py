@@ -16,13 +16,27 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import tempfile
+import sys
+import contextlib
+import shutil
 import unittest
+import uuid
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PY = "/opt/venv/bin/python"
+BASE_TMP = Path(os.environ.get("CLAWSQLITE_TEST_TMP", str(REPO_ROOT / ".tmp_tests")))
+BASE_TMP.mkdir(parents=True, exist_ok=True)
+DEFAULT_PY = sys.executable
 PYTHON_BIN = os.environ.get("CLAWSQLITE_PYTHON", DEFAULT_PY)
+
+@contextlib.contextmanager
+def _tempdir():
+    path = BASE_TMP / f"tmp_{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=False)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 class KnowledgeSearchTests(unittest.TestCase):
@@ -48,7 +62,7 @@ class KnowledgeSearchTests(unittest.TestCase):
 
     def test_search_fts_with_filters_and_include_deleted(self):
         """在 FTS 模式下检查基本过滤参数和 include-deleted 行为。"""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with _tempdir() as tmpdir:
             root = Path(tmpdir) / "kb_root"
             root.mkdir(parents=True, exist_ok=True)
 
@@ -144,7 +158,7 @@ class KnowledgeSearchTests(unittest.TestCase):
 
     def test_search_hybrid_and_vec_modes_without_embedding(self):
         """在未启用 embedding 时，检查 hybrid/vec 模式的行为不会崩溃。"""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with _tempdir() as tmpdir:
             root = Path(tmpdir) / "kb_root"
             root.mkdir(parents=True, exist_ok=True)
 
@@ -171,7 +185,7 @@ class KnowledgeSearchTests(unittest.TestCase):
             ]
             self._run(ingest_cmd)
 
-            # hybrid 模式：在 embedding 未启用时应降级为 FTS 或至少给出合理错误，不抛栈
+            # hybrid mode falls back to FTS-only when embedding is unavailable
             hybrid_cmd = [
                 PYTHON_BIN,
                 "-m",
@@ -187,12 +201,16 @@ class KnowledgeSearchTests(unittest.TestCase):
                 "--root",
                 str(root),
             ]
-            self._run(hybrid_cmd, expect_ok=False)
+            p = self._run(hybrid_cmd, expect_ok=True)
+            res = json.loads(p.stdout)
+            self.assertIsInstance(res, list)
+            self.assertIn("NEXT:", p.stderr)
 
-            # vec 模式：同样只检查不会产生 Python 堆栈崩溃
+            # vec mode requires embedding and should error when unavailable
             vec_cmd = hybrid_cmd.copy()
             vec_cmd[vec_cmd.index("hybrid")] = "vec"
-            self._run(vec_cmd, expect_ok=False)
+            p2 = self._run(vec_cmd, expect_ok=False)
+            self.assertIn("NEXT:", p2.stderr)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Reindex and maintenance for clawkb.
+Reindex and maintenance for clawsqlite knowledge.
 """
 from __future__ import annotations
 
@@ -119,7 +119,7 @@ def rebuild(
     rebuild_vec: bool,
     embed_on: bool,
 ) -> Dict[str, Any]:
-    """Legacy reindex entrypoint.
+    """Reindex entrypoint.
 
     For compatibility with the new plumbing layer semantics we narrow the
     responsibilities here:

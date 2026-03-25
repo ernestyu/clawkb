@@ -15,6 +15,7 @@ Global env vars for small LLM:
 from __future__ import annotations
 
 import os
+import sys
 import json
 import re
 import urllib.request
@@ -22,6 +23,7 @@ import urllib.error
 from typing import Any, Dict, List, Optional, Tuple
 
 from .utils import truncate_text, comma_join_tags, extract_keywords_light
+from .embed import embedding_enabled, get_embedding
 
 # Optional Chinese tokenizer/keywords: jieba
 try:  # pragma: no cover - optional dependency
@@ -31,6 +33,78 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # ImportError or others
     _jieba_analyse = None
     _JIEBA_AVAILABLE = False
+
+# Avoid spamming warnings if jieba is missing; only warn once per process.
+_JIEBA_WARNED = False
+
+
+def _tags_semantic_mode() -> str:
+    """Return CLAWSQLITE_TAGS_SEMANTIC mode (auto|on|off)."""
+    return (os.environ.get("CLAWSQLITE_TAGS_SEMANTIC") or "auto").strip().lower()
+
+
+def _semantic_rerank_candidates(snippet: str, candidates: List[str], max_tags: int) -> List[str]:
+    """Re-rank candidate tags using semantic centrality when embedding is enabled.
+
+    This is an opt-in high-end path:
+    - We require embeddings to be configured (embedding_enabled()).
+    - We treat the snippet as the "sentence" vector.
+    - Each candidate tag is embedded; we compute cosine similarity
+      between the tag vector and the snippet vector.
+    - Candidates are re-sorted by this similarity in descending order.
+
+    If anything fails (missing embedding, HTTP error, etc.), we fall back
+    to the original candidate order.
+    """
+
+    if not candidates:
+        return candidates
+
+    if not embedding_enabled():  # quick exit if embedding is not configured
+        return candidates
+
+    snippet = (snippet or "").strip()
+    if not snippet:
+        return candidates
+
+    try:
+        sent_vec = get_embedding(snippet)
+    except Exception:
+        return candidates
+
+    # Pre-compute norm of sentence vector
+    try:
+        import math as _math
+
+        sent_norm = _math.sqrt(sum((float(x) ** 2 for x in sent_vec))) or 1.0
+    except Exception:
+        return candidates
+
+    scored: List[tuple[str, float]] = []
+    for k in candidates:
+        text = (k or "").strip()
+        if not text:
+            scored.append((k, 0.0))
+            continue
+        try:
+            w_vec = get_embedding(text)
+            w_norm = _math.sqrt(sum((float(x) ** 2 for x in w_vec))) or 1.0
+            dot = sum((float(a) * float(b) for a, b in zip(sent_vec, w_vec)))
+            cos = dot / (sent_norm * w_norm)
+        except Exception:
+            cos = 0.0
+        scored.append((k, float(cos)))
+
+    # Sort by cosine similarity (descending); keep original order as tie-breaker
+    scored_sorted = sorted(
+        enumerate(scored), key=lambda t: t[1][1], reverse=True
+    )
+    reordered: List[str] = []
+    for idx, (_k, _score) in scored_sorted:
+        reordered.append(scored[idx][0])
+        if len(reordered) >= max_tags * 3:
+            break
+    return reordered
 
 
 def _strip_metadata_for_generation(content: str) -> str:
@@ -161,11 +235,15 @@ def _heuristic_tags(content: str, max_tags: int = 8, *, snippet_chars: int = 800
     """Heuristic tag extraction.
 
     Preference order:
-    - If jieba is available, use jieba.analyse.textrank on the first
+    - If embeddings + jieba are available and CLAWSQLITE_TAGS_SEMANTIC is
+      `auto`/`on`, use jieba TextRank to get candidates and re-rank them via
+      semantic centrality against the snippet embedding.
+    - Else if jieba is available, use jieba.analyse.textrank on the first
       `snippet_chars` characters (falling back to TF-IDF on error).
     - Otherwise, fall back to extract_keywords_light on the same snippet.
 
-    Both paths apply simple filters to drop numeric/meta tokens.
+    All paths then apply simple filters to drop numeric/meta tokens and
+    keep only the first `max_tags` items.
     """
 
     snippet = (content or "")[:snippet_chars]
@@ -180,7 +258,25 @@ def _heuristic_tags(content: str, max_tags: int = 8, *, snippet_chars: int = 800
                 candidates = list(_jieba_analyse.extract_tags(snippet, topK=max_tags * 3))
             except Exception:
                 candidates = extract_keywords_light(snippet, max_k=max_tags * 3)
+
+        # Optional semantic re-ranking when embeddings are configured.
+        mode = _tags_semantic_mode()
+        if mode in {"auto", "on"}:
+            try:
+                candidates = _semantic_rerank_candidates(snippet, candidates, max_tags)
+            except Exception:
+                # Fall back silently to the original candidate order.
+                pass
     else:
+        # No jieba: fall back to lightweight extractor, but emit a one-time hint.
+        global _JIEBA_WARNED
+        if not _JIEBA_WARNED:
+            _JIEBA_WARNED = True
+            sys.stderr.write(
+                "NEXT: jieba is not installed; tags fall back to a lightweight "
+                "keyword extractor. For better Chinese tags, install jieba via "
+                "'pip install jieba'.\n"
+            )
         candidates = extract_keywords_light(snippet, max_k=max_tags * 3)
 
     # Simple blacklist for obvious meta tokens

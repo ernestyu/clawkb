@@ -40,6 +40,13 @@ The knowledge app helps you:
 - **Embeddings + LLM (optional)**
   - Embeddings: OpenAI‑compatible `/v1/embeddings` API
   - Small LLM: OpenAI‑compatible `/v1/chat/completions` API
+- **Tag generation & search ranking**
+  - Tags are generated from article content via heuristics or a small LLM
+  - When `jieba` is installed, tags are ordered by importance using
+    TextRank/TF‑IDF (and optionally a semantic centrality rerank when
+    embeddings are enabled)
+  - Search ranking uses tag/query matching as an additional signal on top
+    of FTS and vector similarity
 - **CLI first**
   - Simple subcommands: `ingest`, `search`, `show`, `export`, `update`, `delete`, `reindex`
 
@@ -214,6 +221,34 @@ If any of these are missing, **vector features are treated as disabled**:
 - `embedding_enabled()` returns `False`
 - `ingest` will not call the embedding API
 - `search` in `mode=hybrid` will auto‑downgrade to FTS‑only and print a `NEXT` hint
+
+### 4.4 Tag generation & semantic rerank
+
+By default the knowledge app tries to keep `title`, `summary`, and `tags`
+reasonably populated using heuristics and (optionally) a small LLM.
+
+Tag generation has a few modes controlled by `CLAWSQLITE_TAGS_SEMANTIC`:
+
+- `auto` (default):
+  - If both Embedding and `jieba` are available, use TextRank/TF‑IDF to
+    pick candidates and then apply a **semantic centrality rerank** so
+    tags closer to the article’s main theme float to the top.
+  - If `jieba` is available but embeddings are not, use pure
+    TextRank/TF‑IDF; tag order still reflects importance.
+  - If `jieba` is not available, fall back to a lightweight keyword
+    extractor and emit a `NEXT` hint suggesting you install `jieba`.
+- `on`: force semantic centrality rerank when Embedding + `jieba` are both
+  available.
+- `off`: disable semantic rerank; always use the non‑semantic behavior for
+  the current environment.
+
+Search ranking also uses tags as a small but important signal:
+
+- When `jieba` is available (tags are ordered by importance), we compute a
+  continuous tag match score in [0,1] based on how many query keywords
+  exactly match the top tags and how early they appear.
+- When `jieba` is not available, we fall back to a simple 0/1 bonus for
+  any exact tag match, to avoid over‑interpreting a noisy tag order.
 
 ### 4.4 Small LLM configuration (optional)
 

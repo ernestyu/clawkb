@@ -199,6 +199,32 @@ SMALL_LLM_API_KEY=sk-your-small-llm-key
 当前工作目录下的 `.env`，且不会覆盖已存在的环境变量。OpenClaw 场景下通常
 通过 agent 配置注入环境变量。
 
+### 4.3 标签生成与语义重排
+
+知识库应用会尽量通过启发式和（可选的）小模型，保持 `title` / `summary`
+和 `tags` 这些字段比较“干净好用”。
+
+标签生成相关行为由环境变量 `CLAWSQLITE_TAGS_SEMANTIC` 控制：
+
+- `auto`（默认）：
+  - 当 Embedding + `jieba` 都可用时：先用 TextRank/TF‑IDF 选出候选
+    关键词，再通过 **语义向心力重排**，让更接近文章主题的标签排在前面；
+  - 只有 `jieba` 可用、但没有 Embedding 时：仅使用 TextRank/TF‑IDF，
+    生成的 tag 顺序仍然可以视为“重要性降序”；
+  - 完全没有 `jieba` 时：退回轻量级关键词抽取，并输出 NEXT 提示建议
+    安装 `jieba`，此时 tag 顺序只代表“出现顺序”，不再作为排序权重信号。
+- `on`：在 Embedding + `jieba` 都可用时强制开启语义重排。
+- `off`：关闭语义重排，始终使用当前环境下的非语义行为。
+
+在搜索排序阶段，tag 也会作为一个小但重要的信号参与最终得分：
+
+- 当 `jieba` 可用（tag 按重要性排序）时，会计算一个 0..1 之间的
+  tag 匹配得分：根据 query 中有多少关键词精确命中 top tags，以及命中
+  的位置（越靠前权重越高）来打分；
+- 当没有 `jieba` 时，则退回到简单的 0/1 bonus：只要有任意关键词
+  精确命中某个 tag，就给一个小加分，而不会对“看起来有顺序的 tag”
+  过度解读。
+
 ### 4.3 Embedding 配置
 
 当你需要向量检索（`articles_vec`）时，需要配置 Embedding 服务：

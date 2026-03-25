@@ -15,6 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+try:  # optional jieba for tag scoring heuristics
+    import jieba as _jieba_for_tags  # type: ignore
+    _JIEBA_FOR_TAGS_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dependency
+    _jieba_for_tags = None  # type: ignore
+    _JIEBA_FOR_TAGS_AVAILABLE = False
+
 ISO_Z_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
 
 def now_iso_z() -> str:
@@ -254,6 +261,11 @@ def comma_join_tags(tags: Any) -> str:
         parts = [p for p in parts if p]
         return ",".join(parts)
     return str(tags).strip()
+
+def has_jieba_for_tags() -> bool:
+    """Return True if jieba is available for tag scoring heuristics."""
+    return _JIEBA_FOR_TAGS_AVAILABLE
+
 
 def tag_exact_match_bonus(query_keywords: List[str], tags_csv: str) -> float:
     """Return a small bonus if any keyword is an exact tag.

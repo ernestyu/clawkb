@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from . import db as dbmod
 from .utils import (
     build_fts_query_from_keywords,
+    has_jieba_for_tags,
+    tag_exact_match_bonus,
     tag_match_score,
     parse_iso,
 )
@@ -181,7 +183,13 @@ def hybrid_search(
         else:
             fts_score = 0.0
 
-        tag_score = tag_match_score(keywords, r["tags"] or "")
+        # Use richer tag match scoring only when jieba is available (tags
+        # are ordered by importance). Without jieba we fall back to a
+        # simple 0/1 exact-match bonus to avoid overfitting noisy order.
+        if has_jieba_for_tags():
+            tag_score = tag_match_score(keywords, r["tags"] or "")
+        else:
+            tag_score = tag_exact_match_bonus(keywords, r["tags"] or "")
         bonus_priority = 1.0 if int(r["priority"] or 0) > 0 else 0.0
 
         # Recency bonus: rank by created_at among candidates

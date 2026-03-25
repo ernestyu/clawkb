@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import math
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import db as dbmod
@@ -37,6 +38,8 @@ _DEFAULT_SCORE_WEIGHTS: Dict[str, float] = {
     "recency": 0.02,
 }
 
+_SCORE_WEIGHTS_WARNED = False
+
 
 def _score_weights_from_env() -> Dict[str, float]:
     """Return final score weights (vec/fts/tag/priority/recency).
@@ -48,6 +51,7 @@ def _score_weights_from_env() -> Dict[str, float]:
     The env override must provide all five keys; otherwise it is ignored
     and defaults are used. Values are normalized to sum to 1.0.
     """
+    global _SCORE_WEIGHTS_WARNED
     text = os.environ.get("CLAWSQLITE_SCORE_WEIGHTS", "").strip()
     if not text:
         return dict(_DEFAULT_SCORE_WEIGHTS)
@@ -72,10 +76,23 @@ def _score_weights_from_env() -> Dict[str, float]:
     # Require all keys to be present; partial overrides are ignored to
     # keep behavior predictable.
     if set(tmp.keys()) != set(_DEFAULT_SCORE_WEIGHTS.keys()):
+        if not _SCORE_WEIGHTS_WARNED:
+            _SCORE_WEIGHTS_WARNED = True
+            sys.stderr.write(
+                "NEXT: CLAWSQLITE_SCORE_WEIGHTS is invalid or incomplete; "
+                "expected all keys vec/fts/tag/priority/recency. "
+                "Using default weights.\n"
+            )
         return dict(_DEFAULT_SCORE_WEIGHTS)
 
     total = sum(tmp.values())
     if total <= 0:
+        if not _SCORE_WEIGHTS_WARNED:
+            _SCORE_WEIGHTS_WARNED = True
+            sys.stderr.write(
+                "NEXT: CLAWSQLITE_SCORE_WEIGHTS sums to <= 0; "
+                "using default weights.\n"
+            )
         return dict(_DEFAULT_SCORE_WEIGHTS)
 
     return {k: (tmp[k] / total) for k in _DEFAULT_SCORE_WEIGHTS.keys()}

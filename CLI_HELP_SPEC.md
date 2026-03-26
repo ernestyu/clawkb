@@ -167,7 +167,7 @@ options:
   --category CATEGORY   Category, e.g. web/github/story
   --priority PRIORITY   Priority (0 default)
   --gen-provider {openclaw,llm,off}
-                        Field generator provider
+                        Generator provider (llm affects tags only)
   --max-summary-chars MAX_SUMMARY_CHARS
                         Hard limit for summary length (chars)
   --scrape-cmd SCRAPE_CMD
@@ -239,7 +239,7 @@ options:
   --fts                 With --rebuild: rebuild FTS index
   --vec                 With --rebuild: clear vec index (no embedding)
   --gen-provider {openclaw,llm,off}
-                        Generator provider for fix-missing
+                        Generator provider for fix-missing (llm affects tags only)
 
 ## clawsqlite knowledge search --help
 usage: clawsqlite knowledge search [-h] [--root ROOT] [--db DB]
@@ -357,6 +357,6 @@ options:
   --regen {title,summary,tags,embedding,all}
                         Regenerate fields (embedding=refresh vec from summary)
   --gen-provider {openclaw,llm,off}
-                        Generator provider for regen
+                        Generator provider for regen (llm affects tags only)
   --max-summary-chars MAX_SUMMARY_CHARS
                         Hard limit for summary length (chars)

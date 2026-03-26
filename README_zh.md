@@ -19,7 +19,7 @@
 - 将 URL 或原始文本入库为 Markdown 文件 + 数据库记录
 - 基于 FTS5 的全文检索
 - 可选的向量检索（依赖外部 Embedding 服务）
-- 基于启发式或小模型的小结（title / summary / tags）生成与刷新
+- 基于启发式或小模型的小结（title / summary，tags 可选由小模型生成）生成与刷新
 - 日常维护命令（检查 / 修复 / 重建索引，以及清理孤儿文件）
 
 > 状态：已经在真实的 OpenClaw 环境中使用，接口尽量保持简单、稳定。
@@ -44,7 +44,7 @@
 
 - **可选 Embedding 和小模型**
   - Embedding：通过兼容 OpenAI 的 `/v1/embeddings` HTTP 接口
-  - 小模型（small LLM）：通过兼容 `/v1/chat/completions` 的接口生成标题/摘要/标签
+  - 小模型（small LLM）：通过兼容 `/v1/chat/completions` 的接口生成标签
 
 - **命令行优先**
   - 核心子命令：`ingest`，`search`，`show`，`export`，`update`，`delete`，`reindex`，`maintenance`
@@ -184,7 +184,7 @@ EMBEDDING_MODEL=your-embedding-model
 EMBEDDING_API_KEY=sk-your-embedding-key
 CLAWSQLITE_VEC_DIM=1024
 
-# 小模型（可选，用于生成标题/摘要/标签）
+# 小模型（可选，用于生成标签）
 SMALL_LLM_BASE_URL=https://llm.example.com/v1
 SMALL_LLM_MODEL=your-small-llm
 SMALL_LLM_API_KEY=sk-your-small-llm-key
@@ -199,64 +199,19 @@ SMALL_LLM_API_KEY=sk-your-small-llm-key
 当前工作目录下的 `.env`，且不会覆盖已存在的环境变量。OpenClaw 场景下通常
 通过 agent 配置注入环境变量。
 
-### 4.3 标签生成与语义重排
+### 4.3 标签生成（长摘要 + LLM / jieba 降级）
 
-知识库应用会尽量通过启发式和（可选的）小模型，保持 `title` / `summary`
-和 `tags` 这些字段比较“干净好用”。
+入库抓取到正文后，会先从正文构造“长摘要”（写入 summary 字段）：
+- 取正文开头约 1200 字（到自然段结尾；可能略多或略少）
+- 再加上文章最后一段（通常是总结）
 
+标签 tags 就从这个长摘要生成（不会直接用全文）：
+- 满配：`--gen-provider llm` 且配置 `SMALL_LLM_BASE_URL/SMALL_LLM_MODEL/SMALL_LLM_API_KEY` 时，用小模型从长摘要生成 tags（要求按重要性降序输出）。
+- 降级：未配置 LLM 或调用失败时，会输出 WARNING/NEXT 提示，并使用 jieba v6 启发式算法从长摘要提取 tags；若未安装 jieba，则退回轻量关键词提取。
 
-- `auto`（默认）：
-  - 当 Embedding + `jieba` 都可用时：先用 TextRank/TF‑IDF 选出候选
-    关键词，再通过 **语义向心力重排**，让更接近文章主题的标签排在前面；
-  - 只有 `jieba` 可用、但没有 Embedding 时：仅使用 TextRank/TF‑IDF，
-    生成的 tag 顺序仍然可以视为“重要性降序”；
-  - 完全没有 `jieba` 时：退回轻量级关键词抽取，并输出 NEXT 提示建议
-    安装 `jieba`，此时 tag 顺序只代表“出现顺序”，不再作为排序权重信号。
-- `on`：在 Embedding + `jieba` 都可用时强制开启语义重排。
-- `off`：关闭语义重排，始终使用当前环境下的非语义行为。
-
-在搜索排序阶段，tag 也会作为一个小但重要的信号参与最终得分：
-
-- 当 `jieba` 可用（tag 按重要性排序）时，会计算一个 0..1 之间的
-  tag 匹配得分：根据 query 中有多少关键词精确命中 top tags，以及命中
-  的位置（越靠前权重越高）来打分；
-- 当没有 `jieba` 时，则退回到简单的 0/1 bonus：只要有任意关键词
-  精确命中某个 tag，就给一个小加分，而不会对“看起来有顺序的 tag”
-  过度解读。
-
-对于自然语言的查询问句，在构造 FTS 查询前也会先做一轮“关键词抽取”：
-默认使用与标签生成相同的 TextRank +（可选的）语义向心力流水线
-（`provider=openclaw` 场景），从整句 query 中筛出少量真正代表意图的
-关键词，再交给 FTS。若运行环境完全没有 `jieba`，则会退回轻量级
-启发式抽取，并通过带有 `NEXT:` 前缀的提示告诉你可以通过
-`pip install jieba` 来获得更好的中文搜索效果。
-
-最终的混合得分是一个带权重的线性组合：
-
-```text
-score = w_vec * vec_score
-      + w_fts * fts_score
-      + w_tag * tag_score
-      + w_priority * priority_bonus
-      + w_recency * recency_bonus
-```
-
-默认配置等价于：
-
-```text
-CLAWSQLITE_SCORE_WEIGHTS=vec=0.55,fts=0.25,tag=0.15,priority=0.03,recency=0.02
-```
-
-大致含义是：
-
-- 约 55% 的向量分负责“深度语义锚定”；
-- 约 25% 的 FTS/BM25 分负责“文本重心校验”；
-- 约 15% 的标签分视为“作者显式意图”的主权信号；
-- 约 3% 的优先级分作为你手动置顶的物理接口；
-- 约 2% 的时效分让新知识稍微占点便宜，但不会形成霸榜。
-
-你可以通过 `CLAWSQLITE_SCORE_WEIGHTS` 覆盖这组权重（必须同时提供
-vec/fts/tag/priority/recency 五个键；详见 `ENV.example`）。
+查询侧（search）会先从自然语言 query 抽取关键词（v4 纯算法；CJK 优先用 jieba），例如 `["网络", "爬虫", "文章"]`：
+- 这些关键词用于 FTS 关键词检索、tag 匹配与加权打分
+- 向量检索仍会做 embedding，但输入是“原始 query + 关键词拼接”，以降低虚词干扰同时保留上下文
 
 ### 4.3 Embedding 配置
 
@@ -284,7 +239,7 @@ vec/fts/tag/priority/recency 五个键；详见 `ENV.example`）。
 
 ### 4.4 小模型（Small LLM）配置
 
-如果希望用小模型生成/优化标题、摘要和标签，可以配置：
+如果希望用小模型生成/优化标签，可以配置：
 
 ```env
 SMALL_LLM_BASE_URL=https://llm.example.com/v1
@@ -303,7 +258,7 @@ clawsqlite knowledge ????? OpenAI ? chat completions ???????????? JSON????? `tag
 如果未配置 SMALL_LLM，则：
 
 - `gen-provider=openclaw` 会使用纯启发式；
-- `gen-provider=llm` 会报错并提示 SMALL_LLM 未启用。
+- `gen-provider=llm` 未配置 SMALL_LLM 时会自动降级为 jieba 标签提取，并输出 NEXT 提示。
 
 ### 4.5 抓取脚本（Scraper）配置
 
@@ -531,7 +486,7 @@ clawsqlite knowledge update --id 3 --tags "rag,sqlite,openclaw"
 # 用启发式重新生成摘要
 clawsqlite knowledge update --id 3 --regen summary --gen-provider openclaw
 
-# 用小模型同时重刷标题/摘要/标签
+# 用小模型生成/重刷标签
 clawsqlite knowledge update --id 3 --regen all --gen-provider llm
 ```
 

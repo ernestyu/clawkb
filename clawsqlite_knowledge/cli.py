@@ -1013,7 +1013,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--tags", default=None, help="Tags override (comma-separated)")
     sp.add_argument("--category", default="", help="Category, e.g. web/github/story")
     sp.add_argument("--priority", default=0, type=int, help="Priority (0 default)")
-    sp.add_argument("--gen-provider", default="openclaw", choices=["openclaw", "llm", "off"], help="Field generator provider")
+    sp.add_argument("--gen-provider", default="openclaw", choices=["openclaw", "llm", "off"], help="Generator provider (llm affects tags only)")
     sp.add_argument("--max-summary-chars", default=1200, type=int, help="Hard limit for summary length (chars)")
     sp.add_argument("--scrape-cmd", default=None, help="Scraper command for URL ingest. Or env CLAWSQLITE_SCRAPE_CMD")
     sp.add_argument("--update-existing", action="store_true", help="If URL exists, refresh that record instead of inserting a new one")
@@ -1066,7 +1066,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["title", "summary", "tags", "embedding", "all"],
         help="Regenerate fields (embedding=refresh vec from summary)",
     )
-    sp.add_argument("--gen-provider", default="openclaw", choices=["openclaw", "llm", "off"], help="Generator provider for regen")
+    sp.add_argument("--gen-provider", default="openclaw", choices=["openclaw", "llm", "off"], help="Generator provider for regen (llm affects tags only)")
     sp.add_argument("--max-summary-chars", default=1200, type=int, help="Hard limit for summary length (chars)")
     sp.set_defaults(func=cmd_update)
 
@@ -1086,7 +1086,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--rebuild", action="store_true", help="Rebuild indexes")
     sp.add_argument("--fts", action="store_true", help="With --rebuild: rebuild FTS index")
     sp.add_argument("--vec", action="store_true", help="With --rebuild: clear vec index (no embedding)")
-    sp.add_argument("--gen-provider", default="openclaw", choices=["openclaw", "llm", "off"], help="Generator provider for fix-missing")
+    sp.add_argument("--gen-provider", default="openclaw", choices=["openclaw", "llm", "off"], help="Generator provider for fix-missing (llm affects tags only)")
     sp.set_defaults(func=cmd_reindex)
 
     # embed-from-summary (knowledge-level wrapper)

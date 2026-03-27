@@ -19,6 +19,34 @@ import sqlite3
 from typing import List, Optional
 
 
+def _enable_extensions(conn: sqlite3.Connection) -> None:
+    """Best-effort enabling of extensions (libsimple / vec0, etc.).
+
+    This keeps plumbing close to the knowledge app semantics without
+    hard-coding any app-specific paths. For now we only handle the
+    FTS simple tokenizer, following the same env/defaults as
+    clawsqlite_knowledge:
+
+    - CLAWSQLITE_TOKENIZER_EXT overrides the path;
+    - otherwise default to /usr/local/lib/libsimple.so.
+
+    Errors are swallowed; if the extension cannot be loaded, SQLite's
+    builtin tokenizer behavior is left as-is.
+    """
+    try:
+        conn.enable_load_extension(True)
+    except Exception:
+        return
+    ext = os.environ.get("CLAWSQLITE_TOKENIZER_EXT") or "/usr/local/lib/libsimple.so"
+    if not ext or ext.lower() == "none":
+        return
+    try:
+        conn.load_extension(ext)
+    except Exception:
+        # Fallback: leave FTS in builtin tokenizer mode.
+        return
+
+
 def _open_db(path: str) -> sqlite3.Connection:
     if not path:
         print("ERROR: --db is required")
@@ -30,6 +58,7 @@ def _open_db(path: str) -> sqlite3.Connection:
         raise SystemExit(2)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    _enable_extensions(conn)
     return conn
 
 

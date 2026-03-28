@@ -347,6 +347,38 @@ def cmd_show(args) -> int:
             sys.stderr.write("NEXT: use 'clawsqlite knowledge search ... --json' to locate a valid id before calling show.\n")
             return 2
 
+        # Usage tracking: increment view_count / last_viewed_at when show is
+        # explicitly called. This is intentionally lightweight and only
+        # affects article_usage when an article is actually viewed.
+        try:
+            from . import db as _db
+
+            _db.ensure_article_usage(conn)
+            now = now_iso_z()
+            aid = int(row["id"])
+            cur = conn.execute(
+                "SELECT view_count, first_viewed_at, last_viewed_at FROM article_usage WHERE article_id=?",
+                (aid,),
+            )
+            usage = cur.fetchone()
+            if usage is None:
+                conn.execute(
+                    "INSERT INTO article_usage(article_id, view_count, first_viewed_at, last_viewed_at) "
+                    "VALUES(?, 1, ?, ?)",
+                    (aid, now, now),
+                )
+            else:
+                vc = int(usage["view_count"] or 0) + 1
+                fv = usage["first_viewed_at"] or now
+                conn.execute(
+                    "UPDATE article_usage SET view_count=?, first_viewed_at=?, last_viewed_at=? WHERE article_id=?",
+                    (vc, fv, now, aid),
+                )
+            conn.commit()
+        except Exception:
+            # Usage tracking is best-effort; failures should not break show.
+            pass
+
         out = dict(row)
         if args.full:
             p = (row["local_file_path"] or "").strip()

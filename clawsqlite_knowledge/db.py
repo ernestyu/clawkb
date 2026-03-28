@@ -6,6 +6,7 @@ Tables
 - articles: source of truth.
 - articles_fts: FTS5 (contentless) table kept in sync by the app.
 - articles_vec: vec0 (sqlite-vec) table for vector search (optional).
+- article_usage: optional per-article usage metrics (view_count, first/last view).
 
 Optional extensions
 - libsimple.so (tokenizer "simple") for better Chinese tokenization.
@@ -239,6 +240,26 @@ CREATE VIRTUAL TABLE IF NOT EXISTS articles_vec USING vec0(
   embedding float[{dim}]
 );
 """
+
+
+def ensure_article_usage(conn: sqlite3.Connection) -> None:
+    """Ensure the optional article_usage table exists.
+
+    This table tracks basic per-article view metrics. It is created lazily
+    the first time usage tracking is needed, so deployments that never
+    enable usage tracking will not see this table.
+    """
+    conn.execute(
+        """
+CREATE TABLE IF NOT EXISTS article_usage (
+  article_id      INTEGER PRIMARY KEY,
+  view_count      INTEGER NOT NULL DEFAULT 0,
+  first_viewed_at TEXT,
+  last_viewed_at  TEXT
+);
+"""
+    )
+    conn.commit()
 
 
 def _tag_vec_schema() -> Optional[str]:

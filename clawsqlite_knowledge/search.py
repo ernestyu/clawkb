@@ -19,9 +19,17 @@ from .utils import (
 )
 
 def _normalize_vec_distance(distance: float) -> float:
-    # Convert L2 distance to a score in (0,1], higher is better.
-    # This is simple and stable.
-    return 1.0 / (1.0 + max(0.0, float(distance)))
+    """Convert L2 distance to a score in (0,1], higher is better.
+
+    We apply a simple 1/(1+d) transform and then a sigmoid-style
+    sharpening to increase contrast between close and far neighbors.
+    """
+    d = max(0.0, float(distance))
+    base = 1.0 / (1.0 + d)
+    # Simple sharpening: emphasize high base scores while squashing
+    # low ones. This is not a strict logistic curve but behaves
+    # similarly over (0,1).
+    return base * base
 
 def _rank_score(rank: int, total: int) -> float:
     if total <= 0:

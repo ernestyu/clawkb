@@ -2,8 +2,8 @@
 """Interest cluster builder for clawsqlite_knowledge.
 
 This module implements a simple k-means style clustering over article
-embeddings stored in `articles_vec` and writes the result into
-`interest_clusters` and `interest_cluster_members` tables.
+embeddings stored in `articles_vec` / `articles_tag_vec` and writes the
+result into `interest_clusters` and `interest_cluster_members` tables.
 
 Design goals (v0):
 - Keep dependencies minimal (pure Python + stdlib; no numpy/sklearn).
@@ -154,16 +154,20 @@ def build_interest_clusters(
 ) -> Dict[str, Any]:
     """Build interest clusters from existing article embeddings.
 
-    This implementation uses only summary embeddings from articles_vec and
-    considers undeleted articles with non-empty summaries.
+    This implementation builds interest vectors from a mix of summary and
+    tag embeddings when available, and considers undeleted articles with
+    non-empty summaries.
     """
-    # Load candidate vectors
+    # Load candidate vectors: summary + optional tag embeddings.
     dim = _resolve_vec_dim()
     rows = conn.execute(
         """
-SELECT a.id AS id, v.embedding AS embedding
+SELECT a.id AS id,
+       sv.embedding AS summary_embedding,
+       tv.embedding AS tag_embedding
 FROM articles a
-JOIN articles_vec v ON v.id = a.id
+LEFT JOIN articles_vec sv ON sv.id = a.id
+LEFT JOIN articles_tag_vec tv ON tv.id = a.id
 WHERE a.deleted_at IS NULL
   AND a.summary IS NOT NULL AND trim(a.summary) != ''
 """
@@ -171,13 +175,43 @@ WHERE a.deleted_at IS NULL
 
     ids: List[int] = []
     points: List[List[float]] = []
+    # Weights for mixing summary/tag embeddings into an interest vector.
+    w_tag = float(os.environ.get("CLAWSQLITE_INTEREST_TAG_WEIGHT", "0.75") or 0.75)
+    if w_tag < 0.0:
+        w_tag = 0.0
+    if w_tag > 1.0:
+        w_tag = 1.0
+    w_sum = 1.0 - w_tag
+
     for r in rows:
         try:
-            vec = _blob_to_floats(r["embedding"], dim)
+            sv_blob = r["summary_embedding"]
+            tv_blob = r["tag_embedding"]
+            if sv_blob is None and tv_blob is None:
+                continue
+            # Decode available embeddings.
+            sv = _blob_to_floats(sv_blob, dim) if sv_blob is not None else None
+            tv = _blob_to_floats(tv_blob, dim) if tv_blob is not None else None
+            # Fallback logic:
+            # - If both are present: mix with weights.
+            # - If only one is present: use it as-is.
+            if sv is None and tv is not None:
+                vec = tv
+            elif tv is None and sv is not None:
+                vec = sv
+            else:
+                # Both present: build interest vector as weighted sum.
+                vec = [0.0] * dim
+                if w_sum > 0.0:
+                    for i in range(dim):
+                        vec[i] += w_sum * sv[i]
+                if w_tag > 0.0:
+                    for i in range(dim):
+                        vec[i] += w_tag * tv[i]
+            ids.append(int(r["id"]))
+            points.append(vec)
         except Exception:
             continue
-        ids.append(int(r["id"]))
-        points.append(vec)
 
     n = len(points)
     if n == 0:

@@ -348,6 +348,24 @@ def cmd_show(args) -> int:
             sys.stderr.write("NEXT: use 'clawsqlite knowledge search ... --json' to locate a valid id before calling show.\n")
             return 2
 
+        # Best-effort usage tracking: atomic upsert with view_count += 1
+        try:
+            now = now_iso_z()
+            conn.execute(
+                """
+INSERT INTO article_usage(article_id, view_count, first_viewed_at, last_viewed_at)
+VALUES(?, 1, ?, ?)
+ON CONFLICT(article_id) DO UPDATE SET
+  view_count = article_usage.view_count + 1,
+  last_viewed_at = excluded.last_viewed_at
+""",
+                (int(args.id), now, now),
+            )
+            conn.commit()
+        except Exception:
+            # Telemetry only; never break show.
+            pass
+
         out = dict(row)
         if args.full:
             p = (row["local_file_path"] or "").strip()

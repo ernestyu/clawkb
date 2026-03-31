@@ -258,7 +258,13 @@ def main() -> None:
         ax.set_ylabel("PC2")
         fig.colorbar(sc, ax=ax, label="cluster index")
         fig.tight_layout()
-        plt.show()
+
+        # In headless environments (Docker), we save the plot as a PNG
+        # instead of calling plt.show(). The file is written next to this
+        # test module for easy inspection.
+        out_path = Path(__file__).resolve().parent / "interest_clusters_pca.png"
+        fig.savefig(out_path, dpi=150)
+        print(f"\nSaved centroid scatter plot to {out_path}")
 
     finally:
         conn.close()

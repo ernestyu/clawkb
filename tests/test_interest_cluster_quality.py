@@ -37,6 +37,7 @@ import numpy as np
 
 from clawsqlite_knowledge.interest import _blob_to_floats, _squared_l2
 from clawsqlite_knowledge.embed import _resolve_vec_dim
+from clawsqlite_knowledge.db import _find_vec0_so
 
 try:
     import matplotlib.pyplot as plt  # type: ignore
@@ -176,6 +177,16 @@ def main() -> None:
         raise SystemExit(f"DB not found: {db_path}")
 
     conn = sqlite3.connect(str(db_path))
+    # Best-effort load vec0 extension, mirroring clawsqlite_knowledge.db
+    try:
+        conn.enable_load_extension(True)
+        ext = os.environ.get("CLAWSQLITE_VEC_EXT") or _find_vec0_so()
+        if ext and ext.lower() != "none":
+            conn.load_extension(ext)
+    except Exception:
+        # For this analysis helper we don't hard-fail on vec0 issues.
+        pass
+
     # Return rows as tuples
     conn.row_factory = None
 

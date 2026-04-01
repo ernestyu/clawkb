@@ -1091,6 +1091,32 @@ def cmd_inspect_interest_clusters(args) -> int:
         return 4
 
 
+def cmd_report_interest(args) -> int:
+    paths = _resolve_paths(args)
+    db_path = paths["db"]
+    if not os.path.exists(db_path):
+        sys.stderr.write(f"ERROR: db not found at {db_path}. Check --root/--db or .env configuration.\n")
+        return 2
+    try:
+        report_dir = run_interest_report(
+            db_path,
+            days=int(getattr(args, "days", 7) or 7),
+            date_from=getattr(args, "date_from", None),
+            date_to=getattr(args, "date_to", None),
+            vec_dim=getattr(args, "vec_dim", None),
+            out_dir=str(getattr(args, "out_dir", "reports") or "reports"),
+            lang=getattr(args, "lang", None),
+            no_pdf=bool(getattr(args, "no_pdf", False)),
+        )
+        sys.stdout.write(f"Report written to {report_dir}\n")
+        return 0
+    except SystemExit as e:
+        return int(e.code or 1)
+    except Exception as e:
+        sys.stderr.write(f"ERROR: report-interest failed: {e}\n")
+        return 4
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="clawsqlite knowledge", description="OpenClaw knowledge base CLI (SQLite + FTS5 + sqlite-vec).")
     # Also accept common flags before subcommand

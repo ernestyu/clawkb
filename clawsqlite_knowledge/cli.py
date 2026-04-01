@@ -1108,6 +1108,7 @@ def cmd_report_interest(args) -> int:
             out_dir=str(getattr(args, "out_dir", "reports") or "reports"),
             lang=getattr(args, "lang", None),
             no_pdf=bool(getattr(args, "no_pdf", False)),
+            fmt=getattr(args, "fmt", None),
         )
         sys.stdout.write(f"Report written to {report_dir}\n")
         return 0
@@ -1235,6 +1236,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--vec-dim", type=int, default=None, help="Embedding dimension (optional, default: CLAWSQLITE_VEC_DIM / auto)")
     sp.add_argument("--out-dir", default="reports", help="Root directory for reports (default: ./reports)")
     sp.add_argument("--lang", default=None, help="Report language (en/zh). Default: $CLAWSQLITE_REPORT_LANG or en")
+    sp.add_argument("--format", dest="fmt", default=None, choices=["md", "html"], help="Additional output format: 'md' (default) or 'html' (also write report.html via pandoc)")
     sp.add_argument("--no-pdf", action="store_true", help="Do not run pandoc to generate PDF")
     sp.set_defaults(func=cmd_report_interest)
 

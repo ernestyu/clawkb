@@ -279,8 +279,17 @@ def run_interest_report(
     out_dir: str = "reports",
     lang: Optional[str] = None,
     no_pdf: bool = False,
+    fmt: Optional[str] = None,
 ) -> Path:
-    """Generate an interest report and return the report directory path."""
+    """Generate an interest report and return the report directory path.
+
+    Always generates Markdown (+ PNG charts). When fmt="html", also tries to
+    generate a self-contained HTML report via pandoc:
+
+        pandoc report.md -s -o report.html --mathjax --self-contained
+
+    HTML generation is best-effort and never raises if pandoc is missing.
+    """
     lang_code = _resolve_lang(lang)
     strings = _LANG_STRINGS.get(lang_code, _LANG_STRINGS["en"])
 
@@ -536,7 +545,7 @@ def run_interest_report(
         report_md_path = report_dir / "report.md"
         report_md_path.write_text("\n".join(md_lines), encoding="utf-8")
 
-        # Optional PDF via pandoc
+        # Optional PDF via pandoc (best-effort, silent on failure)
         if not no_pdf:
             try:
                 import subprocess
@@ -548,7 +557,28 @@ def run_interest_report(
                     stderr=subprocess.DEVNULL,
                 )
             except Exception:
-                # Best-effort; PDF is a convenience, not required.
+                pass
+
+        # Optional HTML via pandoc (best-effort, silent on failure)
+        if fmt == "html":
+            try:
+                import subprocess
+
+                subprocess.run(
+                    [
+                        "pandoc",
+                        str(report_md_path),
+                        "-s",
+                        "-o",
+                        str(report_dir / "report.html"),
+                        "--mathjax",
+                        "--self-contained",
+                    ],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
                 pass
 
         return report_dir

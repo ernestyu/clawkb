@@ -168,3 +168,44 @@ options:
   --offset OFFSET       Optional OFFSET for batching
 
 ... (other subcommands unchanged)
+
+## clawsqlite knowledge report-interest --help
+usage: clawsqlite knowledge report-interest [-h] [--root ROOT] [--db DB]
+                                            [--articles-dir ARTICLES_DIR]
+                                            [--tokenizer-ext TOKENIZER_EXT]
+                                            [--vec-ext VEC_EXT] [--json]
+                                            [--verbose] [--days DAYS]
+                                            [--from DATE_FROM] [--to DATE_TO]
+                                            [--vec-dim VEC_DIM]
+                                            [--out-dir OUT_DIR] [--lang LANG]
+                                            [--format {md,html}] [--no-pdf]
+
+options:
+  -h, --help            show this help message and exit
+  --root ROOT           Root dir. Priority: CLI --root > $CLAWSQLITE_ROOT >
+                        $CLAWSQLITE_ROOT_DEFAULT > <cwd>/knowledge_data.
+  --db DB               SQLite db path. Priority: CLI --db > $CLAWSQLITE_DB >
+                        <root>/knowledge.sqlite3
+  --articles-dir ARTICLES_DIR
+                        Articles markdown dir. Priority: CLI --articles-dir >
+                        $CLAWSQLITE_ARTICLES_DIR > <root>/articles
+  --tokenizer-ext TOKENIZER_EXT
+                        Tokenizer extension path. Default:
+                        /usr/local/lib/libsimple.so or
+                        $CLAWSQLITE_TOKENIZER_EXT
+  --vec-ext VEC_EXT     vec0 extension path. Default: auto-discover or
+                        $CLAWSQLITE_VEC_EXT
+  --json                Output JSON
+  --verbose             Verbose logging
+  --days DAYS           Lookback window in days (ignored if --from/--to
+                        provided)
+  --from DATE_FROM      Start date (YYYY-MM-DD)
+  --to DATE_TO          End date (YYYY-MM-DD, exclusive)
+  --vec-dim VEC_DIM     Embedding dimension (optional, default:
+                        CLAWSQLITE_VEC_DIM / auto)
+  --out-dir OUT_DIR     Root directory for reports (default: ./reports)
+  --lang LANG           Report language (en/zh). Default:
+                        $CLAWSQLITE_REPORT_LANG or en
+  --format {md,html}    Additional output format: 'md' (default) or 'html'
+                        (also write report.html via pandoc)
+  --no-pdf              Do not run pandoc to generate PDF

@@ -359,8 +359,9 @@ def run_interest_report(
             fig, ax = plt.subplots(figsize=(8, 4))
             ax.bar(dates_sorted, counts_sorted)
             ax.set_title(strings["daily_chart"])
-            ax.set_xlabel(strings["col_date"])
-            ax.set_ylabel(strings["col_count"])
+            # 图上的轴标签统一使用 ASCII，避免依赖 CJK 字体
+            ax.set_xlabel("Date")
+            ax.set_ylabel("New articles")
             fig.autofmt_xdate(rotation=45)
             fig.tight_layout()
             daily_path = images_dir / "daily_articles.png"

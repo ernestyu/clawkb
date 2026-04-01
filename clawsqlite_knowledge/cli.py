@@ -1199,6 +1199,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-plot", action="store_true", help="Only print stats, do not generate PNG plot")
     sp.set_defaults(func=cmd_inspect_interest_clusters)
 
+    # report-interest (KB activity / interest clusters report)
+    sp = sub.add_parser("report-interest", help="Generate an interest cluster activity report (Markdown + optional PDF)")
+    _add_common_flags(sp)
+    sp.add_argument("--days", type=int, default=7, help="Lookback window in days (ignored if --from/--to provided)")
+    sp.add_argument("--from", dest="date_from", default=None, help="Start date (YYYY-MM-DD)")
+    sp.add_argument("--to", dest="date_to", default=None, help="End date (YYYY-MM-DD, exclusive)")
+    sp.add_argument("--vec-dim", type=int, default=None, help="Embedding dimension (optional, default: CLAWSQLITE_VEC_DIM / auto)")
+    sp.add_argument("--out-dir", default="reports", help="Root directory for reports (default: ./reports)")
+    sp.add_argument("--lang", default=None, help="Report language (en/zh). Default: $CLAWSQLITE_REPORT_LANG or en")
+    sp.add_argument("--no-pdf", action="store_true", help="Do not run pandoc to generate PDF")
+    sp.set_defaults(func=cmd_report_interest)
+
     # embed-from-summary (knowledge-level wrapper)
     sp = sub.add_parser("embed-from-summary", help="Embed article summaries into articles_vec via plumbing")
     _add_common_flags(sp)

@@ -81,9 +81,10 @@ _LANG_STRINGS: Dict[str, Dict[str, str]] = {
         "col_mean_radius": "mean_radius",
         "col_prev": "上一窗口",
         "col_diff": "变化",
-        "daily_chart": "每日新增文章数",
-        "cluster_chart": "按兴趣簇分布",
-        "pca_chart": "兴趣簇 PCA（size=size, color=mean_radius）",
+        # 图上统一英文，便于在任意环境无 CJK 字体时也稳定渲染
+        "daily_chart": "Daily new articles",
+        "cluster_chart": "Articles per interest cluster",
+        "pca_chart": "Interest cluster PCA (size=size, color=mean_radius)",
         "trend_table_title": "升温 / 降温簇（当前窗口 vs 上一窗口）",
     },
 }

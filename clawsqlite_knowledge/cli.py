@@ -33,6 +33,7 @@ from .scraper import scrape_url
 from .search import hybrid_search
 from . import reindex as reindex_mod
 from . import interest as interest_mod
+from .inspect_interest import inspect_interest_clusters
 
 # Plumbing layer (generic db/index/fs helpers)
 try:
@@ -1060,6 +1061,26 @@ def cmd_build_interest_clusters(args) -> int:
             conn.close()
 
 
+def cmd_inspect_interest_clusters(args) -> int:
+    paths = _resolve_paths(args)
+    db_path = paths["db"]
+    if not os.path.exists(db_path):
+        sys.stderr.write(f"ERROR: db not found at {db_path}. Check --root/--db or .env configuration.\n")
+        return 2
+    try:
+        inspect_interest_clusters(
+            db_path,
+            vec_dim=getattr(args, "vec_dim", None),
+            no_plot=bool(getattr(args, "no_plot", False)),
+        )
+        return 0
+    except SystemExit as e:
+        return int(e.code or 1)
+    except Exception as e:
+        sys.stderr.write(f"ERROR: inspect-interest-clusters failed: {e}\n")
+        return 4
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="clawsqlite knowledge", description="OpenClaw knowledge base CLI (SQLite + FTS5 + sqlite-vec).")
     # Also accept common flags before subcommand
@@ -1160,6 +1181,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--vec", action="store_true", help="With --rebuild: clear vec index (no embedding)")
     sp.add_argument("--gen-provider", default="openclaw", choices=["openclaw", "llm", "off"], help="Generator provider for fix-missing (llm affects tags only)")
     sp.set_defaults(func=cmd_reindex)
+
+    # inspect-interest-clusters (analysis helper)
+    sp = sub.add_parser("inspect-interest-clusters", help="Inspect interest cluster radius + PCA scatter plot")
+    _add_common_flags(sp)
+    sp.add_argument("--vec-dim", type=int, default=None, help="Embedding dimension (optional, default: CLAWSQLITE_VEC_DIM / auto)")
+    sp.add_argument("--no-plot", action="store_true", help="Only print stats, do not generate PNG plot")
+    sp.set_defaults(func=cmd_inspect_interest_clusters)
 
     # embed-from-summary (knowledge-level wrapper)
     sp = sub.add_parser("embed-from-summary", help="Embed article summaries into articles_vec via plumbing")

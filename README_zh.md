@@ -303,6 +303,11 @@ clawsqlite knowledge inspect-interest-clusters \
   --vec-dim 1024
 ```
 
+提示：该命令依赖 `numpy`；如需生成 PNG 图，还需要 `matplotlib`。
+
+- 仅统计：`pip install 'clawsqlite[analysis]'`
+- 统计 + 绘图：`pip install 'clawsqlite[analysis,plot]'`
+
 - 打印每簇：`size / n_members / mean_radius / max_radius`；
 - 打印簇心两两 `1 - cos` 距离的 `min / max / median`；
 - 若安装了 matplotlib，则生成一张 PCA 2D 散点图：
@@ -329,7 +334,7 @@ clawsqlite knowledge inspect-interest-clusters \
 --gen-provider llm
 ```
 
-clawsqlite knowledge ????? OpenAI ? chat completions ???????????? JSON????? `tags` ???
+clawsqlite knowledge 的 `gen-provider=llm` 会使用启发式生成 title/summary，并通过 OpenAI-compatible chat completions API（SMALL_LLM_*）调用小模型生成 `tags`（要求只输出严格 JSON：`{"tags": [...]}`）。
 
 如果未配置 SMALL_LLM，则：
 

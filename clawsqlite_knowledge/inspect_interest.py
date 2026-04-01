@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-from __future__ import annotations
-
 """Interest cluster inspection helpers (PCA plot + radius stats).
 
 This module exposes the same logic as tests.test_interest_cluster_quality
 but in a reusable form for the knowledge CLI.
 """
+
+from __future__ import annotations
 
 import os
 import sqlite3

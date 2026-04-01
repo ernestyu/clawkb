@@ -11,9 +11,8 @@ import re
 import json
 import unicodedata as _ud
 import datetime as _dt
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 try:  # optional jieba for tag scoring heuristics
     import jieba as _jieba_for_tags  # type: ignore

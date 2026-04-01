@@ -5,7 +5,6 @@ Markdown storage for clawsqlite knowledge.
 from __future__ import annotations
 
 import os
-from typing import Optional
 from .utils import slugify
 
 DEFAULT_ARTICLES_DIR = "/home/node/.openclaw/workspace/clawsqlite/knowledge_data/articles"

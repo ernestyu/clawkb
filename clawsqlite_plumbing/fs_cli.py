@@ -12,7 +12,6 @@ No KB-specific semantics are baked in.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sqlite3
 from typing import List, Optional

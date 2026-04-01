@@ -30,3 +30,12 @@ Thumbs.db
 
 # User Data
 knowledge_data/
+
+# Local temp / tooling
+.tmp_tests/
+.tmp/
+.tmp_wheels/
+dist_test/
+.pytest_cache/
+pytest-cache-files-*
+.gitconfig_codex

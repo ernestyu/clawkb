@@ -5,10 +5,10 @@ Reindex and maintenance for clawsqlite knowledge.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from . import db as dbmod
-from .embed import embedding_enabled, get_embedding, floats_to_f32_blob, _embedding_missing_keys
+from .embed import get_embedding, floats_to_f32_blob
 from .generator import generate_fields
 from .utils import comma_join_tags
 

@@ -590,6 +590,11 @@ clawsqlite knowledge inspect-interest-clusters \
   --vec-dim 1024
 ```
 
+提示：该命令依赖 `numpy`；如需生成 PNG 图，还需要 `matplotlib`。
+
+- 仅统计：`pip install 'clawsqlite[analysis]'`
+- 统计 + 绘图：`pip install 'clawsqlite[analysis,plot]'`
+
 该命令会：
 
 1. 从 `interest_clusters` / `interest_cluster_members` 读出当前簇；

@@ -5,9 +5,8 @@ Search logic for clawsqlite knowledge: vec / fts / hybrid.
 from __future__ import annotations
 
 import os
-import math
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from . import db as dbmod
 from .utils import (
@@ -274,7 +273,6 @@ def hybrid_search(
         fts_rank_map[aid] = idx  # 0 is best
 
     total_fts = len(fts_hits)
-    total_vec = len(vec_hits)
 
     # Apply filters in Python (simpler and stable)
     def _pass_filters(r) -> bool:
@@ -332,7 +330,6 @@ def hybrid_search(
 
     # Score
     results: List[Dict[str, Any]] = []
-    now_dt = parse_iso("1970-01-01T00:00:00Z")  # placeholder; we use recency by relative order only
     for r in filtered:
         aid = int(r["id"])
         dist = vec_map.get(aid, None)

@@ -33,7 +33,6 @@ from .scraper import scrape_url
 from .search import hybrid_search
 from . import reindex as reindex_mod
 from . import interest as interest_mod
-from .inspect_interest import inspect_interest_clusters
 
 # Plumbing layer (generic db/index/fs helpers)
 try:
@@ -1068,6 +1067,14 @@ def cmd_inspect_interest_clusters(args) -> int:
         sys.stderr.write(f"ERROR: db not found at {db_path}. Check --root/--db or .env configuration.\n")
         return 2
     try:
+        try:
+            from .inspect_interest import inspect_interest_clusters
+        except ImportError as e:
+            sys.stderr.write("ERROR: inspect-interest-clusters requires extra dependencies (numpy; matplotlib optional).\n")
+            sys.stderr.write("NEXT: pip install 'clawsqlite[analysis]'  # numpy\n")
+            sys.stderr.write("      pip install 'clawsqlite[analysis,plot]'  # + matplotlib\n")
+            sys.stderr.write(f"DETAIL: {e}\n")
+            return 2
         inspect_interest_clusters(
             db_path,
             vec_dim=getattr(args, "vec_dim", None),
@@ -1075,6 +1082,9 @@ def cmd_inspect_interest_clusters(args) -> int:
         )
         return 0
     except SystemExit as e:
+        if isinstance(e.code, str) and e.code.strip():
+            sys.stderr.write(e.code.strip() + "\n")
+            return 2
         return int(e.code or 1)
     except Exception as e:
         sys.stderr.write(f"ERROR: inspect-interest-clusters failed: {e}\n")
@@ -1183,7 +1193,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_reindex)
 
     # inspect-interest-clusters (analysis helper)
-    sp = sub.add_parser("inspect-interest-clusters", help="Inspect interest cluster radius + PCA scatter plot")
+    sp = sub.add_parser("inspect-interest-clusters", help="Inspect interest cluster radius + PCA scatter plot (requires numpy)")
     _add_common_flags(sp)
     sp.add_argument("--vec-dim", type=int, default=None, help="Embedding dimension (optional, default: CLAWSQLITE_VEC_DIM / auto)")
     sp.add_argument("--no-plot", action="store_true", help="Only print stats, do not generate PNG plot")

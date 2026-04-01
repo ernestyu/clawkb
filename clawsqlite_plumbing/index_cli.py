@@ -151,7 +151,6 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
 def _cmd_search(args: argparse.Namespace) -> int:
     conn = _open_db(args.db)
     try:
-        base = args.table
         fts = args.fts_table
         query = args.query
         limit = int(args.limit or 20)

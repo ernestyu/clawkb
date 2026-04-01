@@ -240,6 +240,7 @@ def main() -> None:
             print("\nmatplotlib not available; skipping centroid scatter plot.")
             return
 
+        # Build centroid matrix (n_clusters x dim)
         X = np.stack([clusters[cid].centroid for cid in ids])
         X_centered = X - X.mean(axis=0, keepdims=True)
         U, S, Vt = np.linalg.svd(X_centered, full_matrices=False)
@@ -248,15 +249,39 @@ def main() -> None:
         xs = X2[:, 0]
         ys = X2[:, 1]
 
+        # Encode cluster size and mean_radius in the visualization:
+        # - point size (s) ∝ cluster size
+        # - color (c) ∝ mean_radius
+        sizes = []
+        mean_radii = []
+        for cid in ids:
+            cl = clusters[cid]
+            members = by_cluster.get(cid) or []
+            if members:
+                dists = [cosine_distance(cl.centroid, m.vec) for m in members]
+                mean_r = float(np.mean(dists))
+            else:
+                mean_r = 0.0
+            sizes.append(cl.size)
+            mean_radii.append(mean_r)
+
+        # Scale sizes for plotting (sqrt to reduce dynamic range)
+        sizes = np.array(sizes, dtype="float32")
+        if sizes.size > 0:
+            sizes_plot = 40.0 * np.sqrt(sizes / sizes.max())
+        else:
+            sizes_plot = 40.0
+
         fig, ax = plt.subplots(figsize=(8, 6))
-        sc = ax.scatter(xs, ys, c=range(len(ids)), cmap="tab20", s=40)
+        sc = ax.scatter(xs, ys, s=sizes_plot, c=mean_radii, cmap="viridis")
         for i, cid in enumerate(ids):
             ax.text(xs[i], ys[i], str(cid), fontsize=8, ha="center", va="center")
 
-        ax.set_title("Interest cluster centroids (PCA to 2D)")
+        ax.set_title("Interest cluster centroids (PCA to 2D; size=size, color=mean_radius)")
         ax.set_xlabel("PC1")
         ax.set_ylabel("PC2")
-        fig.colorbar(sc, ax=ax, label="cluster index")
+        cbar = fig.colorbar(sc, ax=ax, label="mean_radius (1 - cos)")
+        cbar.ax.set_ylabel("mean_radius (1 - cos)", rotation=90, labelpad=10)
         fig.tight_layout()
 
         # In headless environments (Docker), we save the plot as a PNG

@@ -18,21 +18,22 @@ dependencies = [
   "pypinyin>=0.55",
 ]
 
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: Apache Software License",
+  "Intended Audience :: Developers",
+  "Environment :: Console",
+  "Topic :: Database",
+  "Topic :: Text Processing",
+]
+
 [project.optional-dependencies]
 analysis = [
   "numpy>=1.24",
 ]
 plot = [
   "matplotlib>=3.7",
-]
-classifiers = [
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3 :: Only",
-  "License :: OSI Approved :: MIT License",
-  "Intended Audience :: Developers",
-  "Environment :: Console",
-  "Topic :: Database",
-  "Topic :: Text Processing",
 ]
 
 [project.urls]

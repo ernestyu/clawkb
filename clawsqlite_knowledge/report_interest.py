@@ -375,8 +375,9 @@ def run_interest_report(
             fig, ax = plt.subplots(figsize=(8, 4))
             ax.bar(x_labels, y_counts)
             ax.set_title(strings["cluster_chart"])
-            ax.set_xlabel(strings["col_cluster_id"])
-            ax.set_ylabel(strings["col_articles"])
+            # 图上的轴标签统一 ASCII，避免依赖 CJK 字体
+            ax.set_xlabel("Cluster ID")
+            ax.set_ylabel("Articles")
             fig.tight_layout()
             cluster_path = images_dir / "cluster_distribution.png"
             fig.savefig(cluster_path, dpi=150)

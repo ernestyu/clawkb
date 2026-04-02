@@ -57,6 +57,19 @@ CREATE TABLE IF NOT EXISTS interest_cluster_members (
     conn.commit()
 
 
+def _ensure_interest_meta(conn: sqlite3.Connection) -> None:
+    """Ensure interest_meta table exists for cluster build metadata."""
+    conn.execute(
+        """
+CREATE TABLE IF NOT EXISTS interest_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+"""
+    )
+    conn.commit()
+
+
 def _blob_to_floats(blob: bytes, dim: int) -> List[float]:
     import struct
 
@@ -460,5 +473,20 @@ WHERE a.deleted_at IS NULL
             )
 
     conn.commit()
+
+    # Record cluster build metadata for downstream consumers (e.g. clawfeedradar).
+    try:
+        _ensure_interest_meta(conn)
+        now = now_iso_z()
+        conn.execute(
+            "INSERT INTO interest_meta(key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            ("interest_clusters_last_built_at", now),
+        )
+        conn.commit()
+    except Exception:
+        # Metadata recording is best-effort; ignore failures to avoid
+        # breaking the main clustering pipeline.
+        pass
 
     return {"ok": True, "clusters": total_clusters, "articles": n}

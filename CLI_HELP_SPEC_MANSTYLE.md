@@ -12,7 +12,7 @@ python -m clawsqlite_cli knowledge [GLOBAL OPTIONS] <command> [COMMAND OPTIONS]
 ## DESCRIPTION
 - Stores metadata in SQLite and content in Markdown files under an articles directory.
 - Uses FTS5 for full-text search; uses sqlite-vec for vector search when embeddings + vec0 are available.
-- Auto-loads a project-level `.env` from the current working directory; existing environment variables are not overridden.
+- Auto-loads a project-level `.env` from the current working directory; project `.env` overrides existing environment variables (CLI > .env > process env).
 - When embeddings are not available, `search --mode hybrid` falls back to FTS-only and prints a `NEXT:` hint; `--mode vec` errors with a `NEXT:` hint.
 
 ## HELP (ARGPARSE)

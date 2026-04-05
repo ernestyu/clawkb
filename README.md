@@ -49,9 +49,9 @@ The knowledge app helps you:
     of FTS and vector similarity. Internally, the scorer:
     - embeds both the article summary and the tag string into vec0 tables
       (`articles_vec` and `articles_tag_vec`)
-    - normalizes vector distances via a **logistic sigmoid** over a
-      1/(1+d) transform, so that truly close neighbors get much higher
-      scores than merely okay matches
+    - **L2-normalizes** both stored vectors and query vectors, then scores
+      semantic similarity via **cosine similarity** mapped into [0,1]
+      (with a distance->sigmoid fallback for older/partial vec rows)
     - splits the tag channel into **semantic (vector) tag score** and
       **lexical tag match score**, with the split controlled by
       `CLAWSQLITE_TAG_VEC_FRACTION` (default 0.7)
@@ -254,14 +254,15 @@ Search ranking also uses tags as a small but important signal:
 - When `jieba` is not available, we fall back to a simple 0/1 bonus for
   any exact tag match, to avoid over‑interpreting a noisy tag order.
 
-For FTS queries we also extract a small set of keywords from the
-natural‑language query using the v4 heuristic extractor (jieba‑based, no
-embeddings). When `jieba` is missing, query keyword extraction falls back
-to a lightweight heuristic extractor.
+For search we build a small query plan:
 
-For vector search, we embed the original natural‑language query **plus**
-the extracted keywords appended as a short tail, so the embedding is less
-sensitive to filler words while retaining context.
+- `query_refine`: a retrieval-friendly sentence (LLM when enabled; otherwise the raw query)
+- `query_tags`: a keyword/phrase list (LLM when enabled; otherwise heuristic v4 extraction)
+
+We use:
+
+- `query_refine` for FTS and for the main semantic channel (summary vectors in `articles_vec`)
+- `query_tags` for lexical tag matching and for the tag semantic channel (`articles_tag_vec`)
 
 The final hybrid score is a weighted blend of signals::
 
@@ -271,23 +272,33 @@ The final hybrid score is a weighted blend of signals::
 
 By default we use::
 
-    CLAWSQLITE_SCORE_WEIGHTS=vec=0.55,fts=0.25,tag=0.15,priority=0.03,recency=0.02
+    # Mode1/Mode3 (embedding enabled)
+    CLAWSQLITE_SCORE_WEIGHTS_MODE1=vec=0.45,fts=0.25,tag=0.15,priority=0.03,recency=0.02
+    CLAWSQLITE_SCORE_WEIGHTS_MODE3=vec=0.45,fts=0.25,tag=0.15,priority=0.03,recency=0.02
+
+    # Mode2/Mode4 (no embedding)
+    CLAWSQLITE_SCORE_WEIGHTS_MODE2=fts=0.60,tag=0.25,priority=0.08,recency=0.07
+    CLAWSQLITE_SCORE_WEIGHTS_MODE4=fts=0.60,tag=0.25,priority=0.08,recency=0.07
 
 which roughly means:
 
-- ~55% vector similarity for deep semantic anchoring (summary vectors)
+- ~45% vector similarity for deep semantic anchoring (summary vectors)
 - ~25% BM25 keywords for textual sanity checks (FTS over title/tags/summary)
 - ~15% tag channel (split between semantic tag vectors and lexical tag match)
 - ~3% priority as a manual pinning mechanism
 - ~2% recency to keep new knowledge slightly favored without dominating
 
-You can override these weights via `CLAWSQLITE_SCORE_WEIGHTS` (see
-`ENV.example` for details).
+You can override these weights via:
+
+- `CLAWSQLITE_SCORE_WEIGHTS_MODE1..MODE4` (recommended, mode-specific)
+- Legacy compatibility: `CLAWSQLITE_SCORE_WEIGHTS` and `CLAWSQLITE_SCORE_WEIGHTS_TEXT`
+
+See `ENV.example` for details.
 
 For **mixed Chinese/English knowledge bases** you may want to bias more
 strongly towards tag semantics. A common production shape is::
 
-    CLAWSQLITE_SCORE_WEIGHTS=vec=0.30,fts=0.10,tag=0.55,priority=0.03,recency=0.02
+    CLAWSQLITE_SCORE_WEIGHTS_MODE1=vec=0.30,fts=0.10,tag=0.55,priority=0.03,recency=0.02
     CLAWSQLITE_TAG_VEC_FRACTION=0.82
 
 which yields approximately:
@@ -487,8 +498,8 @@ Modes:
 Other flags:
 
 - `--candidates` – candidate pool before re‑ranking
-- `--llm-keywords {auto,on,off}` – FTS query expansion
-- `--gen-provider` – used only if `llm-keywords=auto` and FTS hits are too few
+- `--llm-keywords {auto,on,off}` – small-LLM usage policy for building `query_refine/query_tags`
+- `--gen-provider` – set to `llm` to enable the small LLM (requires `SMALL_LLM_*`)
 - Filters: `--category`, `--tag`, `--since`, `--priority`, `--include-deleted`
 
 ### 6.3 show / export / update / delete
@@ -525,62 +536,97 @@ understand whether vec features are actually usable for the current DB.
 
 ### 6.5 interest clustering (topics)
 
-`clawsqlite` 还支持在现有文章摘要 + 标签向量之上构建“兴趣簇”，供上层
-应用（例如个人读报雷达）当作主题簇使用。
+`clawsqlite` can build topic-like clusters from existing `articles_vec` +
+`articles_tag_vec`.
 
-#### 6.5.1 构建兴趣簇
+#### 6.5.1 Build command
 
 ```bash
 clawsqlite knowledge build-interest-clusters \
   --db /path/to/clawkb.sqlite3 \
-  --min-size 5 \
-  --max-clusters 16
+  --algo kmeans++ \
+  --use-pca \
+  --pca-explained-variance-threshold 0.95 \
+  --min-cluster-size 8 \
+  --max-clusters 50
 ```
 
-行为（简化描述）：
+You can switch backend:
 
-1. 从 `articles` / `articles_vec` / `articles_tag_vec` 中选择未删除、summary
-   非空的文章；
-2. 对每篇文章构造“interest 向量”：
-   - 默认从 summary embedding 和 tag embedding 线性混合得到：
-     `interest = w_sum * summary_vec + w_tag * tag_vec`；
-   - 混合权重由 `CLAWSQLITE_INTEREST_TAG_WEIGHT` 控制（默认 0.75，范围 0~1）；
-3. 第一阶段：高 k k‑means + 小簇重分配：
-   - 初始 k0 由 `min_size` 和 `max_clusters` 决定：
-     `k0 = min(max_clusters, n // min_size)`；
-   - 运行 k‑means 后，将小于 `min_size` 的簇里的点重分配给最近的大簇；
-4. 第二阶段：基于簇心距离阈值自动合并 + 再聚类：
-   - 计算剩余簇心之间的 `cosine distance = 1 - cos_sim`；
-   - 若两簇心距离 `< CLAWSQLITE_INTEREST_MERGE_DISTANCE`，视为“太近”，用
-     union-find 归并到同一组；
-   - 每个组的所有成员向量求平均，得到新的组中心；
-   - 以这些组中心为初始化，再跑一轮 k‑means 得到最终兴趣簇；
-5. 将结果写入：
-   - `interest_clusters(id, label, size, summary_centroid, created_at, updated_at)`
-   - `interest_cluster_members(cluster_id, article_id, membership)`（当前 `membership` 固定为 1.0）。
+```bash
+clawsqlite knowledge build-interest-clusters \
+  --db /path/to/clawkb.sqlite3 \
+  --algo hierarchical \
+  --hierarchical-linkage average \
+  --hierarchical-distance-threshold 0.20
+```
 
-#### 6.5.2 兴趣簇配置（ENV）
+#### 6.5.2 Vector pipeline (important)
 
-可以通过以下环境变量或 `.env` 控制兴趣簇构建行为（CLI 显式参数优先）：
+For each eligible article (undeleted, non-empty summary, at least one vec):
 
-- `CLAWSQLITE_INTEREST_MIN_SIZE`（默认 5）
-  - 每个簇的最小文章数，小于该值的小簇会在第一阶段被重分配到最近的大簇；
-- `CLAWSQLITE_INTEREST_MAX_CLUSTERS`（默认 16）
-  - 第一阶段高 k 聚类的上限：实际 k0 取 `min(max_clusters, n // min_size)`；
-- `CLAWSQLITE_INTEREST_MERGE_DISTANCE`（默认 0.06）
-  - 第二阶段“簇心距离过近需要合并”的阈值，使用 `1 - cos_sim` 度量：
-    - 较小值（~0.05–0.07）→ 话题更细，簇数略多；
-    - 较大值（~0.08–0.12）→ 话题更粗，簇数更少；
-  - 实际推荐值可以结合质量脚本动态估计（见下文）；
-- `CLAWSQLITE_INTEREST_MERGE_ALPHA`（默认 0.4）
-  - 用于“自动推荐 merge 阈值”的比例系数：
-    - 先根据当前兴趣簇计算每个簇的 `mean_radius`（成员到簇心的平均 1 - cos 距离）；
-    - 取其中位数 `median(mean_radius)`，推荐值约为
-      `CLAWSQLITE_INTEREST_MERGE_DISTANCE ≈ alpha * median(mean_radius)`；
-    - 在当前 149 篇示例 KB 上，`median(mean_radius)≈0.17`，
-      `alpha=0.4` 对应的推荐阈值约为 `0.07`。
+1. If both `summary_vec` and `tag_vec` exist:
+   - `summary_vec = L2(summary_vec)`
+   - `tag_vec = L2(tag_vec)`
+   - `mixed = (1-tag_weight)*summary_vec + tag_weight*tag_vec`
+   - `interest_vec_1024 = L2(mixed)`
+2. If only one branch exists:
+   - use that branch after `L2` normalize.
 
-#### 6.5.3 兴趣簇质量分析 & 可视化
+`tag_weight` is controlled by `CLAWSQLITE_INTEREST_TAG_WEIGHT` (default `0.75`).
+
+#### 6.5.3 PCA + clustering backends
+
+- PCA is optional (`CLAWSQLITE_INTEREST_USE_PCA=true/false`).
+- PCA dimension is auto-selected by cumulative explained variance threshold:
+  `CLAWSQLITE_INTEREST_PCA_EXPLAINED_VARIANCE_THRESHOLD` (e.g. `0.90`/`0.95`).
+- Clustering can run in PCA space, but **persisted centroids are always recomputed in original 1024-d space**.
+
+Backends:
+
+- `kmeans++`
+  - standard kmeans++ initialization
+  - initial `k0 = min(max_clusters, max(1, floor(n/min_cluster_size)))`
+  - supports optional post-merge (`enable_post_merge` + cosine threshold)
+- `hierarchical`
+  - linkage: `average` or `complete`
+  - cut by distance threshold (cosine-distance semantics)
+  - falls back to a pure-Python implementation when `scipy` is unavailable
+  - no extra post-merge by default
+
+#### 6.5.4 Unified postprocessing and persistence
+
+After initial labels from either backend:
+
+1. Small-cluster reassignment:
+   - clusters with size `< min_cluster_size` are reassigned to nearest large
+     cluster using original 1024-d vectors.
+2. Final centroids:
+   - recompute centroid in original 1024-d space, then L2 normalize.
+3. Stable cluster IDs:
+   - sort by size desc, tie-break by min article_id, renumber to `1..K`.
+4. Write DB:
+   - `interest_clusters`
+   - `interest_cluster_members` (`membership=1.0`)
+   - `interest_meta` (build timestamp + algo/pca/tag-weight metadata)
+
+#### 6.5.5 Main env knobs
+
+- `CLAWSQLITE_INTEREST_CLUSTER_ALGO` (`kmeans++` | `hierarchical`)
+- `CLAWSQLITE_INTEREST_TAG_WEIGHT` (`0..1`)
+- `CLAWSQLITE_INTEREST_USE_PCA` (`true/false`)
+- `CLAWSQLITE_INTEREST_PCA_EXPLAINED_VARIANCE_THRESHOLD`
+- `CLAWSQLITE_INTEREST_MIN_SIZE`
+- `CLAWSQLITE_INTEREST_MAX_CLUSTERS`
+- `CLAWSQLITE_INTEREST_KMEANS_RANDOM_STATE`
+- `CLAWSQLITE_INTEREST_KMEANS_N_INIT`
+- `CLAWSQLITE_INTEREST_KMEANS_MAX_ITER`
+- `CLAWSQLITE_INTEREST_ENABLE_POST_MERGE`
+- `CLAWSQLITE_INTEREST_MERGE_DISTANCE`
+- `CLAWSQLITE_INTEREST_HIERARCHICAL_LINKAGE`
+- `CLAWSQLITE_INTEREST_HIERARCHICAL_DISTANCE_THRESHOLD`
+
+#### 6.5.6 Cluster quality inspection
 
 为了调参和观察兴趣簇结构，可使用内置分析命令：
 

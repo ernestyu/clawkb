@@ -17,7 +17,7 @@ import numpy as np
 
 from .embed import _resolve_vec_dim
 from .db import _find_vec0_so
-from .interest import _blob_to_floats
+from .interest import load_interest_vectors_from_db
 
 try:  # optional plotting
     import matplotlib.pyplot as plt  # type: ignore
@@ -70,62 +70,16 @@ def _load_clusters(conn: sqlite3.Connection, vec_dim: int) -> Dict[int, Cluster]
 
 
 def _load_interest_vectors(conn: sqlite3.Connection, dim: int) -> Dict[int, List[Member]]:
-    """Rebuild interest vectors in the same way as build_interest_clusters.
-
-    Returns cluster_id -> list[Member].
-    """
+    """Rebuild interest vectors in the same way as build_interest_clusters."""
     from collections import defaultdict
 
+    article_ids, vectors_1024, _ = load_interest_vectors_from_db(conn, dim=dim)
+    points: Dict[int, np.ndarray] = {
+        int(aid): np.asarray(vec, dtype="float32")
+        for aid, vec in zip(article_ids, vectors_1024)
+    }
+
     cur = conn.cursor()
-    cur.execute(
-        """
-SELECT a.id AS id,
-       sv.embedding AS summary_embedding,
-       tv.embedding AS tag_embedding
-FROM articles a
-LEFT JOIN articles_vec sv ON sv.id = a.id
-LEFT JOIN articles_tag_vec tv ON tv.id = a.id
-WHERE a.deleted_at IS NULL
-  AND a.summary IS NOT NULL AND trim(a.summary) != ''
-        """
-    )
-    rows = cur.fetchall()
-
-    w_tag = float(os.environ.get("CLAWSQLITE_INTEREST_TAG_WEIGHT", "0.75") or 0.75)
-    if w_tag < 0.0:
-        w_tag = 0.0
-    if w_tag > 1.0:
-        w_tag = 1.0
-    w_sum = 1.0 - w_tag
-
-    points: Dict[int, np.ndarray] = {}
-    for r in rows:
-        article_id = int(r[0])
-        sv_blob = r[1]
-        tv_blob = r[2]
-        if sv_blob is None and tv_blob is None:
-            continue
-
-        try:
-            sv = _blob_to_floats(sv_blob, dim) if sv_blob is not None else None
-            tv = _blob_to_floats(tv_blob, dim) if tv_blob is not None else None
-        except Exception:
-            continue
-
-        if sv is None and tv is not None:
-            vec = np.asarray(tv, dtype="float32")
-        elif tv is None and sv is not None:
-            vec = np.asarray(sv, dtype="float32")
-        else:
-            arr = np.zeros(dim, dtype="float32")
-            if w_sum > 0.0:
-                arr += w_sum * np.asarray(sv, dtype="float32")
-            if w_tag > 0.0:
-                arr += w_tag * np.asarray(tv, dtype="float32")
-            vec = arr
-
-        points[article_id] = vec
-
     cur.execute("SELECT cluster_id, article_id FROM interest_cluster_members")
     by_cluster: Dict[int, List[Member]] = defaultdict(list)
     for cid, aid in cur.fetchall():

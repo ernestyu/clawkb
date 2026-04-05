@@ -48,7 +48,7 @@ def _open_db(path: str) -> sqlite3.Connection:
 def _cmd_embed_column(args: argparse.Namespace) -> int:
     # Deferred import to avoid hard dependency when knowledge app is absent.
     try:
-        from clawsqlite_knowledge.embed import get_embedding, floats_to_f32_blob
+        from clawsqlite_knowledge.embed import get_embedding, floats_to_f32_blob, l2_normalize
     except Exception as e:  # pragma: no cover
         raise SystemExit(f"ERROR: embedding client not available (clawsqlite_knowledge.embed): {e}")
 
@@ -85,7 +85,7 @@ def _cmd_embed_column(args: argparse.Namespace) -> int:
             text = (r["text"] or "").strip()
             if not text:
                 continue
-            emb = get_embedding(text)
+            emb = l2_normalize(get_embedding(text))
             blob = floats_to_f32_blob(emb)
             # Use manual DELETE + INSERT because UPSERT is not supported on vec0 virtual tables.
             conn.execute(f"DELETE FROM {vec_table} WHERE id=?", (rid,))

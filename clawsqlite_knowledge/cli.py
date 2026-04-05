@@ -29,7 +29,7 @@ from .storage import (
     write_markdown,
 )
 from .generator import generate_fields
-from .embed import embedding_enabled, get_embedding, floats_to_f32_blob, _embedding_missing_keys
+from .embed import embedding_enabled, get_embedding, floats_to_f32_blob, _embedding_missing_keys, l2_normalize
 from .scraper import scrape_url
 from .search import hybrid_search
 from . import reindex as reindex_mod
@@ -289,16 +289,25 @@ def cmd_ingest(args) -> int:
             sys.stderr.write(f"WARNING: FTS upsert failed: {e}\n")
 
         embed_on = embedding_enabled()
-        if embed_on and summary:
+        if embed_on and (summary or tags):
             # Only attempt vec upsert when the vec table actually exists.
             try:
                 if dbmod.vec_table_exists(conn):
                     try:
-                        emb = get_embedding(summary)
-                        blob = floats_to_f32_blob(emb)
-                        dbmod.upsert_vec(conn, new_id, blob)
+                        if summary:
+                            emb = l2_normalize(get_embedding(summary))
+                            blob = floats_to_f32_blob(emb)
+                            dbmod.upsert_vec(conn, new_id, blob)
+                        else:
+                            dbmod.delete_vec(conn, new_id)
+                        if tags:
+                            emb_tag = l2_normalize(get_embedding(tags))
+                            blob_tag = floats_to_f32_blob(emb_tag)
+                            dbmod.upsert_tag_vec(conn, new_id, blob_tag)
+                        else:
+                            dbmod.delete_tag_vec(conn, new_id)
                     except Exception as e:
-                        sys.stderr.write(f"WARNING: vec upsert failed: {e}\n")
+                        sys.stderr.write(f"WARNING: vec/tag_vec upsert failed: {e}\n")
                 else:
                     embed_on = False
             except Exception:
@@ -509,9 +518,8 @@ def cmd_search(args) -> int:
                 "falling back to FTS-only. Configure embedding + vec0 for better results.\n"
             )
 
-        def _qvec_blob(q: str) -> bytes:
-            emb = get_embedding(q)
-            return floats_to_f32_blob(emb)
+        def _qvec(q: str) -> List[float]:
+            return l2_normalize(get_embedding(q))
 
         filters: Dict[str, Any] = {}
         if args.category:
@@ -533,7 +541,7 @@ def cmd_search(args) -> int:
             gen_provider=args.gen_provider,
             llm_keywords=args.llm_keywords,
             embed_enabled=embed_on,
-            get_query_vec_blob=_qvec_blob,
+            get_query_embedding=_qvec,
             filters=filters,
         )
 
@@ -580,6 +588,7 @@ def cmd_update(args) -> int:
         summary = (row["summary"] or "")
         summary_before = summary
         tags = (row["tags"] or "")
+        tags_before = tags
         category = (row["category"] or "")
         priority = int(row["priority"] or 0)
 
@@ -685,15 +694,35 @@ def cmd_update(args) -> int:
         # sync vec
         regen = (args.regen or "").lower().strip()
         need_vec_recompute = regen in ("embedding", "all") or (summary != summary_before)
+        need_tag_vec_recompute = regen in ("embedding", "all", "tags") or (tags != tags_before)
         if summary and embed_on and need_vec_recompute:
             try:
-                blob = floats_to_f32_blob(get_embedding(summary))
+                blob = floats_to_f32_blob(l2_normalize(get_embedding(summary)))
                 dbmod.upsert_vec(conn, aid, blob)
             except Exception as e:
                 sys.stderr.write(f"WARNING: vec sync failed: {e}\n")
         elif not summary or not embed_on:
             try:
                 dbmod.delete_vec(conn, aid)
+            except Exception:
+                pass
+
+        if embed_on and need_tag_vec_recompute:
+            tag_text = (tags or "").strip()
+            if tag_text:
+                try:
+                    blob_tag = floats_to_f32_blob(l2_normalize(get_embedding(tag_text)))
+                    dbmod.upsert_tag_vec(conn, aid, blob_tag)
+                except Exception as e:
+                    sys.stderr.write(f"WARNING: tag vec sync failed: {e}\n")
+            else:
+                try:
+                    dbmod.delete_tag_vec(conn, aid)
+                except Exception:
+                    pass
+        elif not embed_on:
+            try:
+                dbmod.delete_tag_vec(conn, aid)
             except Exception:
                 pass
 
@@ -732,6 +761,10 @@ def cmd_delete(args) -> int:
                 pass
             try:
                 dbmod.delete_vec(conn, aid)
+            except Exception:
+                pass
+            try:
+                dbmod.delete_tag_vec(conn, aid)
             except Exception:
                 pass
             dbmod.delete_article_row(conn, aid)
@@ -774,6 +807,10 @@ def cmd_delete(args) -> int:
                 pass
             try:
                 dbmod.delete_vec(conn, aid)
+            except Exception:
+                pass
+            try:
+                dbmod.delete_tag_vec(conn, aid)
             except Exception:
                 pass
 
@@ -1029,27 +1066,36 @@ def cmd_build_interest_clusters(args) -> int:
     conn = None
     try:
         conn = _open_for_command(db_path, need_fts=False, need_vec=True, args=args)
-        # We require embeddings + vec0 to be meaningful.
-        missing_keys = _embedding_missing_keys()
-        if missing_keys:
-            sys.stderr.write(
-                "ERROR: build-interest-clusters requires embeddings; missing "
-                + ", ".join(missing_keys)
-                + "\n"
-            )
-            sys.stderr.write(
-                "NEXT: configure EMBEDDING_MODEL/EMBEDDING_BASE_URL/EMBEDDING_API_KEY and CLAWSQLITE_VEC_DIM, "
-                "and ensure vec0 is available.\n"
-            )
-            return 2
         params = resolve_interest_params(
             cli_min_size=getattr(args, "min_size", None),
             cli_max_clusters=getattr(args, "max_clusters", None),
+            cli_algo=getattr(args, "algo", None),
+            cli_tag_weight=getattr(args, "tag_weight", None),
+            cli_use_pca=getattr(args, "use_pca", None),
+            cli_pca_explained_variance_threshold=getattr(args, "pca_explained_variance_threshold", None),
+            cli_kmeans_random_state=getattr(args, "kmeans_random_state", None),
+            cli_kmeans_n_init=getattr(args, "kmeans_n_init", None),
+            cli_kmeans_max_iter=getattr(args, "kmeans_max_iter", None),
+            cli_enable_post_merge=getattr(args, "enable_post_merge", None),
+            cli_merge_distance_threshold=getattr(args, "merge_distance_threshold", None),
+            cli_hierarchical_distance_threshold=getattr(args, "hierarchical_distance_threshold", None),
+            cli_hierarchical_linkage=getattr(args, "hierarchical_linkage", None),
         )
         out = interest_mod.build_interest_clusters(
             conn,
             min_size=int(params["min_size"]),
             max_clusters=int(params["max_clusters"]),
+            cluster_algo=str(params["cluster_algo"]),
+            tag_weight=float(params["tag_weight"]),
+            use_pca=bool(params["use_pca"]),
+            pca_explained_variance_threshold=float(params["pca_explained_variance_threshold"]),
+            kmeans_random_state=int(params["kmeans_random_state"]),
+            kmeans_n_init=int(params["kmeans_n_init"]),
+            kmeans_max_iter=int(params["kmeans_max_iter"]),
+            enable_post_merge=bool(params["enable_post_merge"]),
+            merge_distance_threshold=float(params["merge_distance_threshold"]),
+            hierarchical_distance_threshold=float(params["hierarchical_distance_threshold"]),
+            hierarchical_linkage=str(params["hierarchical_linkage"]),
         )
         _print(out, bool(getattr(args, "json", False)))
         return 0 if out.get("ok") else 4
@@ -1129,8 +1175,26 @@ def build_parser() -> argparse.ArgumentParser:
     # build-interest-clusters
     sp = sub.add_parser("build-interest-clusters", help="Build interest clusters from existing article embeddings")
     _add_common_flags(sp)
-    sp.add_argument("--min-size", type=int, default=5, help="Minimum cluster size (articles per cluster)")
-    sp.add_argument("--max-clusters", type=int, default=64, help="Maximum number of clusters to keep")
+    sp.add_argument("--algo", choices=["kmeans++", "hierarchical"], default=None, help="Clustering backend (default from env or kmeans++)")
+    sp.add_argument("--tag-weight", type=float, default=None, help="Weight of tag_vec in interest-vector mix, range [0,1]")
+    sp.add_argument("--use-pca", dest="use_pca", action="store_true", default=None, help="Enable PCA before clustering")
+    sp.add_argument("--no-pca", dest="use_pca", action="store_false", help="Disable PCA and cluster in original vector space")
+    sp.add_argument(
+        "--pca-explained-variance-threshold",
+        type=float,
+        default=None,
+        help="PCA cumulative explained variance threshold (e.g. 0.90, 0.95)",
+    )
+    sp.add_argument("--min-size", "--min-cluster-size", dest="min_size", type=int, default=None, help="Minimum cluster size")
+    sp.add_argument("--max-clusters", type=int, default=None, help="Maximum initial clusters (kmeans++)")
+    sp.add_argument("--kmeans-random-state", type=int, default=None, help="Random seed for kmeans++")
+    sp.add_argument("--kmeans-n-init", type=int, default=None, help="Number of kmeans++ restarts")
+    sp.add_argument("--kmeans-max-iter", type=int, default=None, help="Max iterations per kmeans++ run")
+    sp.add_argument("--enable-post-merge", dest="enable_post_merge", action="store_true", default=None, help="Enable post-merge of close clusters (kmeans++)")
+    sp.add_argument("--disable-post-merge", dest="enable_post_merge", action="store_false", help="Disable post-merge of close clusters (kmeans++)")
+    sp.add_argument("--merge-distance-threshold", type=float, default=None, help="Post-merge cosine-distance threshold (kmeans++)")
+    sp.add_argument("--hierarchical-distance-threshold", type=float, default=None, help="Distance threshold used to cut hierarchical tree")
+    sp.add_argument("--hierarchical-linkage", choices=["average", "complete"], default=None, help="Hierarchical linkage strategy")
     sp.set_defaults(func=cmd_build_interest_clusters)
 
     # ingest

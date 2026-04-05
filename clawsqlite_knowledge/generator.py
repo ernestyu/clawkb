@@ -92,6 +92,11 @@ def _chat_url(base_url: str) -> str:
 def _small_llm_enabled() -> bool:
     return bool(os.environ.get("SMALL_LLM_MODEL") and os.environ.get("SMALL_LLM_BASE_URL") and os.environ.get("SMALL_LLM_API_KEY"))
 
+
+def small_llm_enabled() -> bool:
+    """Public helper: whether SMALL_LLM_* search/generation path is usable."""
+    return _small_llm_enabled()
+
 def _call_small_llm_json(prompt: str, *, timeout: int = 60) -> Dict[str, Any]:
     model = os.environ.get("SMALL_LLM_MODEL")
     base_url = os.environ.get("SMALL_LLM_BASE_URL")
@@ -321,6 +326,79 @@ def _heuristic_keywords_for_query(query: str, max_k: int = 10) -> List[str]:
     return out[:max_k]
 
 
+def _llm_refine_and_keywords_for_query(
+    query: str,
+    *,
+    min_k: int = 8,
+    max_k: int = 12,
+) -> Dict[str, Any]:
+    """Use SMALL_LLM to produce query_refine + query_tags for retrieval."""
+    prompt = (
+        "Rewrite the user query for retrieval and extract important search tags.\n"
+        "Constraints:\n"
+        "- Keep original intent; do NOT add new facts.\n"
+        "- query_refine: one concise retrieval sentence.\n"
+        f"- query_tags: {min_k} to {max_k} short keywords/phrases, sorted by importance.\n"
+        "- Output STRICT JSON only with keys: query_refine, query_tags\n\n"
+        f"User query:\n{query}\n"
+    )
+    obj = _call_small_llm_json(prompt)
+    query_refine = str(obj.get("query_refine", "") or "").strip()
+    query_tags = _normalize_tags(obj.get("query_tags", []), max_tags=max_k)
+    return {"query_refine": query_refine, "query_tags": query_tags}
+
+
+def generate_search_query_plan(
+    query: str,
+    *,
+    provider: str,
+    max_k: int = 12,
+    min_k: int = 8,
+) -> Dict[str, Any]:
+    """Build search inputs: query_refine + query_tags.
+
+    Behavior:
+    - provider=llm and SMALL_LLM_* available: try LLM first.
+    - otherwise (or on failure): fallback to heuristic extraction.
+    """
+    text = (query or "").strip()
+    if not text:
+        return {"query_refine": "", "query_tags": [], "used_llm": False}
+
+    provider = (provider or "openclaw").strip().lower()
+    max_k = max(1, int(max_k or 12))
+    min_k = max(1, int(min_k or 8))
+    if min_k > max_k:
+        min_k = max_k
+
+    if provider == "llm" and _small_llm_enabled():
+        try:
+            llm_out = _llm_refine_and_keywords_for_query(
+                text,
+                min_k=min_k,
+                max_k=max_k,
+            )
+            query_refine = (llm_out.get("query_refine") or "").strip() or text
+            query_tags = _normalize_tags(llm_out.get("query_tags", []), max_tags=max_k)
+            if not query_tags:
+                query_tags = _heuristic_keywords_for_query(query_refine, max_k=max_k)
+            return {
+                "query_refine": query_refine,
+                "query_tags": query_tags[:max_k],
+                "used_llm": True,
+            }
+        except Exception:
+            pass
+
+    query_refine = text
+    query_tags = _heuristic_keywords_for_query(text, max_k=max_k)
+    return {
+        "query_refine": query_refine,
+        "query_tags": query_tags[:max_k],
+        "used_llm": False,
+    }
+
+
 def generate_fields(
     content: str,
     *,
@@ -376,16 +454,15 @@ def generate_keywords_for_search(query: str, *, provider: str, max_k: int = 10) 
     if provider == "llm":
         if not _small_llm_enabled():
             return _heuristic_keywords_for_query(query, max_k=max_k)
-        prompt = (
-            "Extract keywords for searching a personal knowledge base.\n"
-            "Output STRICT JSON: {\"keywords\": [\"...\"]}\n"
-            f"Query: {query}\n"
+        plan = generate_search_query_plan(
+            query,
+            provider="llm",
+            max_k=max_k,
+            min_k=min(max_k, 5),
         )
-        obj = _call_small_llm_json(prompt)
-        kws = obj.get("keywords", [])
+        kws = plan.get("query_tags", [])
         if not isinstance(kws, list):
             kws = []
-        kws = [str(x).strip() for x in kws if str(x).strip()]
         if not kws:
             kws = _heuristic_keywords_for_query(query, max_k=max_k)
         return kws[:max_k]

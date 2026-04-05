@@ -30,11 +30,11 @@ import argparse
 import os
 import sqlite3
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
 import numpy as np
 
-from clawsqlite_knowledge.interest import _blob_to_floats
+from clawsqlite_knowledge.interest import load_interest_vectors_from_db
 from clawsqlite_knowledge.embed import _resolve_vec_dim
 from clawsqlite_knowledge.db import _find_vec0_so
 
@@ -46,57 +46,8 @@ def _load_interest_vectors(conn: sqlite3.Connection, dim: int) -> np.ndarray:
     `clawsqlite_knowledge.interest.build_interest_clusters` but returns a
     single 2D numpy array of shape (n_articles, dim).
     """
-    cur = conn.cursor()
-    cur.execute(
-        """
-SELECT a.id AS id,
-       sv.embedding AS summary_embedding,
-       tv.embedding AS tag_embedding
-FROM articles a
-LEFT JOIN articles_vec sv ON sv.id = a.id
-LEFT JOIN articles_tag_vec tv ON tv.id = a.id
-WHERE a.deleted_at IS NULL
-  AND a.summary IS NOT NULL AND trim(a.summary) != ''
-        """
-    )
-    rows = cur.fetchall()
-
-    # Same mixing weights as build_interest_clusters
-    w_tag = float(os.environ.get("CLAWSQLITE_INTEREST_TAG_WEIGHT", "0.75") or 0.75)
-    if w_tag < 0.0:
-        w_tag = 0.0
-    if w_tag > 1.0:
-        w_tag = 1.0
-    w_sum = 1.0 - w_tag
-
-    vectors: List[np.ndarray] = []
-    for r in rows:
-        article_id = int(r[0])  # noqa: F841 - reserved for future use
-        sv_blob = r[1]
-        tv_blob = r[2]
-        if sv_blob is None and tv_blob is None:
-            continue
-
-        try:
-            sv = _blob_to_floats(sv_blob, dim) if sv_blob is not None else None
-            tv = _blob_to_floats(tv_blob, dim) if tv_blob is not None else None
-        except Exception:
-            # Skip rows with malformed embeddings.
-            continue
-
-        if sv is None and tv is not None:
-            vec = np.asarray(tv, dtype="float32")
-        elif tv is None and sv is not None:
-            vec = np.asarray(sv, dtype="float32")
-        else:
-            arr = np.zeros(dim, dtype="float32")
-            if w_sum > 0.0:
-                arr += w_sum * np.asarray(sv, dtype="float32")
-            if w_tag > 0.0:
-                arr += w_tag * np.asarray(tv, dtype="float32")
-            vec = arr
-
-        vectors.append(vec)
+    _, vectors_1024, _ = load_interest_vectors_from_db(conn, dim=dim)
+    vectors: List[np.ndarray] = [np.asarray(vec, dtype="float32") for vec in vectors_1024]
 
     if not vectors:
         raise SystemExit("No interest vectors could be constructed from DB")

@@ -8,7 +8,7 @@ import os
 from typing import Any, Dict, List
 
 from . import db as dbmod
-from .embed import get_embedding, floats_to_f32_blob
+from .embed import get_embedding, floats_to_f32_blob, l2_normalize
 from .generator import generate_fields
 from .utils import comma_join_tags
 
@@ -97,7 +97,7 @@ def fix_missing(
         # Ensure vec row exists if embedding enabled and summary exists
         if embed_on and summary:
             try:
-                emb = get_embedding(summary)
+                emb = l2_normalize(get_embedding(summary))
                 blob = floats_to_f32_blob(emb)
                 dbmod.upsert_vec(conn, aid, blob)
                 updated_vec += 1
@@ -108,11 +108,16 @@ def fix_missing(
             tag_text = (tags or "").strip()
             if tag_text:
                 try:
-                    emb_tag = get_embedding(tag_text)
+                    emb_tag = l2_normalize(get_embedding(tag_text))
                     blob_tag = floats_to_f32_blob(emb_tag)
                     dbmod.upsert_tag_vec(conn, aid, blob_tag)
                 except Exception as e:
                     errors.append(f"id={aid}: tag vec upsert failed: {e}")
+            else:
+                try:
+                    dbmod.delete_tag_vec(conn, aid)
+                except Exception:
+                    pass
 
     conn.commit()
     return {

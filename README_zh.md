@@ -211,7 +211,13 @@ OpenClaw 场景下通常通过 agent 配置注入环境变量。
 
 查询侧（search）会先从自然语言 query 抽取关键词（v4 纯算法；CJK 优先用 jieba），例如 `["网络", "爬虫", "文章"]`：
 - 这些关键词用于 FTS 关键词检索、tag 匹配与加权打分
-- 向量检索仍会做 embedding，但输入是“原始 query + 关键词拼接”，以降低虚词干扰同时保留上下文
+- 查询侧会先构造一个 “query plan”：
+  - `query_refine`：更适合检索的一句话（启用小模型时由 LLM 改写；否则等于原 query）
+  - `query_tags`：关键词/短语列表（启用小模型时由 LLM 生成；否则用 v4 启发式抽取）
+  - `query_refine/query_tags` 的长度由 `CLAWSQLITE_SEARCH_QUERY_TAG_MIN/MAX` 控制
+- 向量检索会分别对 `query_refine` 和 `query_tags` 做 embedding：
+  - `query_refine` 对比 `articles_vec`（内容语义通道）
+  - `query_tags` 对比 `articles_tag_vec`（标签语义通道）
 
 ### 4.3 向量检索与打分（Embedding + 评分逻辑）
 
@@ -234,10 +240,11 @@ OpenClaw 场景下通常通过 agent 配置注入环境变量。
 - 对摘要和标签分别计算向量：
   - 摘要向量写入 `articles_vec`；
   - 标签向量写入 `articles_tag_vec`（同一维度）；
-- 在归一化距离时，先做 `1/(1+d)`（d 为 L2 距离），再经过一个以 0.5 为中心的
-  **Logistic Sigmoid**，让“真正相似”的条目得分明显高于一般相似；
+- **入库与查询都会做 L2 normalize**（把向量归一化到长度为 1），再用 **cosine similarity**
+  计算语义相似度，并映射到 0~1 区间作为语义分；（对旧数据/缺失 vec 行会保留距离打分兜底）
 - 在打分阶段，标签通道会拆成：
   - 标签语义得分（tag vector）；
+  - 两者线性混合：`tag_score = frac * tag_vec + (1-frac) * tag_lex`，其中 `frac` 由 `CLAWSQLITE_TAG_VEC_FRACTION` 控制（默认 0.7）；
   - 标签字面匹配得分（tag lexical），并可通过
     `CLAWSQLITE_TAG_FTS_LOG_ALPHA` 对标签字面分做 `ln(1+αx)/ln(1+α)` 的 log 压缩
     （默认 α=5.0，α<=0 时关闭压缩）；
@@ -263,37 +270,81 @@ SMALL_LLM_API_KEY=sk-your-small-llm-key
 
 ### 4.5 兴趣簇（interest clusters）配置与调试
 
-在知识库已经积累了一定文章（例如几十到几百篇）后，可以基于摘要和
-标签 embedding 构建“兴趣簇”，把知识 base 看成若干兴趣主题：
+在知识库积累到一定规模后，可以基于摘要向量与标签向量构建兴趣簇。
+新版本支持两种后端：
 
-- 簇定义存储在：
-  - `interest_clusters(id,label,size,summary_centroid,created_at,updated_at)`
-  - `interest_cluster_members(cluster_id,article_id,membership)`
-- 上层应用（例如个人读报雷达）可以把这些簇当成 topic/兴趣点来使用。
+- `kmeans++`
+- `hierarchical`
 
-构建命令：
+示例（kmeans++）：
 
 ```bash
 clawsqlite knowledge build-interest-clusters \
   --db /path/to/clawkb.sqlite3 \
-  --min-size 5 \
-  --max-clusters 16
+  --algo kmeans++ \
+  --use-pca \
+  --pca-explained-variance-threshold 0.95 \
+  --min-cluster-size 8 \
+  --max-clusters 50
 ```
 
-并可通过以下 env 或 `.env` 控制行为（CLI 参数优先）：
+示例（hierarchical）：
 
-- `CLAWSQLITE_INTEREST_MIN_SIZE`（默认 5）
-  - 每个簇的最小文章数，小于该值的小簇会被重分配到最近大簇；
-- `CLAWSQLITE_INTEREST_MAX_CLUSTERS`（默认 16）
-  - 第一阶段 k-means 的簇上限，实际 k0= `min(max_clusters, n//min_size)`；
-- `CLAWSQLITE_INTEREST_MERGE_DISTANCE`（默认 0.06）
-  - 基于簇心余弦距离的“合并阈值”，使用 `1 - cos_sim`；
-  - 值越小，簇越细；值越大，簇越粗，最终簇数越少；
-- `CLAWSQLITE_INTEREST_MERGE_ALPHA`（默认 0.4）
-  - 用于自动建议 merge 阈值的比例系数：
-    - 根据当前兴趣簇计算每簇的 `mean_radius`（成员到簇心的平均 1 - cos 距离）；
-    - 取其中位数作为典型半径 `median(mean_radius)`；
-    - 推荐阈值约为 `merge_distance ≈ alpha * median(mean_radius)`。
+```bash
+clawsqlite knowledge build-interest-clusters \
+  --db /path/to/clawkb.sqlite3 \
+  --algo hierarchical \
+  --hierarchical-linkage average \
+  --hierarchical-distance-threshold 0.20
+```
+
+兴趣向量构造规则（关键）：
+
+1. 同时有 `summary_vec` 与 `tag_vec`：
+   - 先分别做 L2 归一化；
+   - 再按权重混合：
+     `mixed = (1-tag_weight)*summary + tag_weight*tag`；
+   - 对 `mixed` 再做一次 L2 归一化，得到最终 `interest_vec_1024`。
+2. 仅有一条支路时：
+   - 对该向量做 L2 归一化后直接使用。
+
+其中 `tag_weight` 由 `CLAWSQLITE_INTEREST_TAG_WEIGHT` 控制（默认 `0.75`）。
+
+PCA 与落库约束：
+
+- 可选启用 PCA（`CLAWSQLITE_INTEREST_USE_PCA`）。
+- PCA 维度按累计解释方差阈值自动选择
+  （`CLAWSQLITE_INTEREST_PCA_EXPLAINED_VARIANCE_THRESHOLD`）。
+- 聚类可在 PCA 空间执行，但**最终写库质心一定在原始 1024 维空间重算并归一化**。
+
+统一后处理：
+
+1. 小簇重分配（`size < min_cluster_size`）；
+2. 最近大簇判断在原始 1024 维空间进行；
+3. `kmeans++` 路径可选 post-merge（`enable_post_merge` + 距离阈值）；
+4. 最终簇按“簇大小降序 + 最小 article_id 升序”稳定重编号；
+5. 写入：
+   - `interest_clusters`
+   - `interest_cluster_members`（`membership=1.0`）
+   - `interest_meta`（构建时间、算法、PCA 参数、tag_weight 等元信息）
+
+说明：`hierarchical` 在有 `scipy` 时走 scipy 路径；无 `scipy` 时会自动回退为纯 Python 实现（大数据量下会更慢）。
+
+主要配置项（CLI > .env > 默认值）：
+
+- `CLAWSQLITE_INTEREST_CLUSTER_ALGO`
+- `CLAWSQLITE_INTEREST_TAG_WEIGHT`
+- `CLAWSQLITE_INTEREST_USE_PCA`
+- `CLAWSQLITE_INTEREST_PCA_EXPLAINED_VARIANCE_THRESHOLD`
+- `CLAWSQLITE_INTEREST_MIN_SIZE`
+- `CLAWSQLITE_INTEREST_MAX_CLUSTERS`
+- `CLAWSQLITE_INTEREST_KMEANS_RANDOM_STATE`
+- `CLAWSQLITE_INTEREST_KMEANS_N_INIT`
+- `CLAWSQLITE_INTEREST_KMEANS_MAX_ITER`
+- `CLAWSQLITE_INTEREST_ENABLE_POST_MERGE`
+- `CLAWSQLITE_INTEREST_MERGE_DISTANCE`
+- `CLAWSQLITE_INTEREST_HIERARCHICAL_LINKAGE`
+- `CLAWSQLITE_INTEREST_HIERARCHICAL_DISTANCE_THRESHOLD`
 
 调试与可视化：
 
@@ -528,8 +579,8 @@ clawsqlite knowledge search "查询词" --mode hybrid --topk 20 --json
 
 - `--topk`：返回结果条数
 - `--candidates`：初始候选集大小
-- `--llm-keywords {auto,on,off}`：是否用小模型扩展 FTS 查询关键词
-- `--gen-provider`：在 `llm-keywords=auto/on` 时使用的小模型提供者
+- `--llm-keywords {auto,on,off}`：是否使用小模型构造 `query_refine/query_tags`（`off` 强制关闭）
+- `--gen-provider`：设为 `llm` 时启用小模型（需要配置 `SMALL_LLM_*`）
 - 过滤：`--category` / `--tag` / `--since` / `--priority` / `--include-deleted`
 
 ### 6.3 show / export
@@ -554,8 +605,9 @@ clawsqlite knowledge update --id ID [补丁参数] [--regen ...]
 
 - `id` / `source_url` / `created_at` 视为只读字段，不会被修改；
 - 可更新：`tags` / `category` / `priority`；
-- `--regen {title,summary,tags,all}`：根据当前 Markdown 正文调用生成器重新计算部分字段；
-  - `embedding` 目前不会在 `update` 中执行向量重算；如需重建向量，请使用 `clawsqlite knowledge embed-from-summary`。
+- `--regen {title,summary,tags,embedding,all}`：根据当前 Markdown 正文调用生成器重新计算部分字段；
+  - 当 Embedding 可用时，`update` 会在摘要或标签变化时自动同步向量（或使用 `--regen embedding/all` 强制重算）；
+  - 如需对全库批量重建摘要向量，可使用 `clawsqlite knowledge embed-from-summary`（标签向量会在后续 update/reindex 中补齐）。
 - 更新后自动同步 FTS/vec 索引。
 
 示例：

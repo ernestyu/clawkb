@@ -7,6 +7,99 @@ without strict version tagging yet. Entries are grouped by date + topic.
 
 ---
 
+## 2026-04-05 – Search Recall Tiers & Vector Normalization
+
+### Added
+
+- **Four-tier search capability modes** (auto-selected at query time):
+  - Mode1: LLM + Embedding
+  - Mode2: LLM + no Embedding
+  - Mode3: no LLM + Embedding
+  - Mode4: no LLM + no Embedding
+
+- **Query planning for search**: build `query_refine` + `query_tags` (LLM when enabled; heuristic fallback otherwise).
+
+- **Mode-specific score weight overrides** via env:
+  - `CLAWSQLITE_SCORE_WEIGHTS_MODE1..MODE4`
+  - `CLAWSQLITE_SCORE_WEIGHTS_TEXT` (for text-only modes)
+
+### Changed
+
+- **Vector storage & scoring semantics**:
+  - All stored vectors and query vectors are now **L2-normalized** before use.
+  - Semantic scoring uses **cosine similarity mapped to [0,1]**, with a distance-based fallback for older/partial vec rows.
+
+- **Tag vector maintenance**:
+  - `ingest` / `update` now keep `articles_tag_vec` in sync (when embeddings are enabled), in addition to `articles_vec`.
+
+- **Embedding plumbing** (`clawsqlite embed column`) now L2-normalizes vectors before writing to vec tables.
+
+- **Documentation** updated:
+  - `ENV.example` expanded into a recommended `.env` template with the new knobs.
+  - `README.md` / `README_zh.md` updated to match the new search modes and scoring.
+
+## 2026-04-05 – Interest Cluster Builder Refactor (kmeans++ / hierarchical / PCA)
+
+### Added
+
+- **Unified interest-cluster pipeline** in `clawsqlite_knowledge.interest`:
+  - Data loading (`articles` + `articles_vec` + `articles_tag_vec`)
+  - Interest-vector construction with strict branch-wise L2 normalization:
+    - `summary_vec` and `tag_vec` are each L2-normalized first
+    - weighted mix by `tag_weight`
+    - final L2 normalization of the mixed vector
+  - Optional PCA with **auto dimension selection** from cumulative explained variance threshold.
+  - Two algorithm backends:
+    - `kmeans++`
+    - `hierarchical` (distance-threshold cut; `average`/`complete` linkage)
+  - Unified postprocessing:
+    - small-cluster reassignment in original 1024-d space
+    - optional post-merge for `kmeans++`
+  - Stable final cluster renumbering rule:
+    - by cluster size desc, then min `article_id`.
+
+- **New build-interest-clusters CLI options**:
+  - `--algo`
+  - `--tag-weight`
+  - `--use-pca` / `--no-pca`
+  - `--pca-explained-variance-threshold`
+  - `--min-size` / `--min-cluster-size`
+  - `--max-clusters`
+  - `--kmeans-random-state`
+  - `--kmeans-n-init`
+  - `--kmeans-max-iter`
+  - `--enable-post-merge` / `--disable-post-merge`
+  - `--merge-distance-threshold`
+  - `--hierarchical-distance-threshold`
+  - `--hierarchical-linkage`
+
+### Changed
+
+- `resolve_interest_params` now resolves the full clustering parameter set
+  from CLI/env/defaults (not just `min_size/max_clusters`).
+
+- `build-interest-clusters` no longer requires live embedding API keys;
+  it works from stored vectors in DB.
+
+- Final metadata in `interest_meta` now includes:
+  - `interest_cluster_algo`
+  - `interest_cluster_use_pca`
+  - `interest_cluster_pca_variance_threshold`
+  - `interest_cluster_pca_dim`
+  - `interest_cluster_pca_explained_variance`
+  - `interest_cluster_tag_weight`
+
+- Analysis helpers now rebuild vectors through shared clustering logic, so
+  quality inspection scripts and cluster builder use the same vector pipeline.
+
+### Docs
+
+- Updated `ENV.example` with a full recommended interest-clustering template.
+- Updated `README.md` and `README_zh.md` to document:
+  - new backends and parameters
+  - PCA behavior and 1024-d centroid invariant
+  - unified postprocessing and persistence behavior.
+
 ## 2026-03-31 / 2026-04-01 – Interest Clustering & Analysis
 
 ### Added

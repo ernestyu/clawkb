@@ -32,10 +32,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
-import math
 import numpy as np
 
-from clawsqlite_knowledge.interest import _blob_to_floats, _squared_l2
+from clawsqlite_knowledge.interest import load_interest_vectors_from_db
 from clawsqlite_knowledge.embed import _resolve_vec_dim
 from clawsqlite_knowledge.db import _find_vec0_so
 
@@ -84,63 +83,14 @@ def load_clusters(conn: sqlite3.Connection, vec_dim: int) -> Dict[int, Cluster]:
 
 
 def _load_interest_vectors(conn: sqlite3.Connection, dim: int) -> Dict[int, List[Member]]:
-    """Rebuild interest vectors in the same way as build_interest_clusters.
-
-    We re-run the SQL in build_interest_clusters to ensure we use the
-    same article subset and the same summary/tag mixing weights.
-
-    Returns a mapping: cluster_id -> list[Member].
-    """
+    """Rebuild interest vectors in the same way as build_interest_clusters."""
 
     cur = conn.cursor()
-
-    # Load raw rows as in build_interest_clusters
-    cur.execute(
-        """
-SELECT a.id AS id,
-       sv.embedding AS summary_embedding,
-       tv.embedding AS tag_embedding
-FROM articles a
-LEFT JOIN articles_vec sv ON sv.id = a.id
-LEFT JOIN articles_tag_vec tv ON tv.id = a.id
-WHERE a.deleted_at IS NULL
-  AND a.summary IS NOT NULL AND trim(a.summary) != ''
-        """
-    )
-    rows = cur.fetchall()
-
-    # Same mixing weights as build_interest_clusters
-    w_tag = float(os.environ.get("CLAWSQLITE_INTEREST_TAG_WEIGHT", "0.75") or 0.75)
-    if w_tag < 0.0:
-        w_tag = 0.0
-    if w_tag > 1.0:
-        w_tag = 1.0
-    w_sum = 1.0 - w_tag
-
-    # Build interest vectors and remember article_id -> vector
-    points: Dict[int, np.ndarray] = {}
-    for r in rows:
-        article_id = int(r[0])
-        sv_blob = r[1]
-        tv_blob = r[2]
-        if sv_blob is None and tv_blob is None:
-            continue
-
-        sv = _blob_to_floats(sv_blob, dim) if sv_blob is not None else None
-        tv = _blob_to_floats(tv_blob, dim) if tv_blob is not None else None
-        if sv is None and tv is not None:
-            vec = np.array(tv, dtype="float32")
-        elif tv is None and sv is not None:
-            vec = np.array(sv, dtype="float32")
-        else:
-            arr = np.zeros(dim, dtype="float32")
-            if w_sum > 0.0:
-                arr += w_sum * np.array(sv, dtype="float32")
-            if w_tag > 0.0:
-                arr += w_tag * np.array(tv, dtype="float32")
-            vec = arr
-
-        points[article_id] = vec
+    article_ids, vectors_1024, _ = load_interest_vectors_from_db(conn, dim=dim)
+    points: Dict[int, np.ndarray] = {
+        int(aid): np.asarray(vec, dtype="float32")
+        for aid, vec in zip(article_ids, vectors_1024)
+    }
 
     # Map articles to clusters via interest_cluster_members
     cur.execute(

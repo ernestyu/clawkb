@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import json
 import struct
+import math
 from typing import List
 
 import httpx
@@ -136,3 +137,18 @@ def floats_to_f32_blob(vec: List[float], *, dim: int | None = None) -> bytes:
         raise ValueError(f"Embedding dim mismatch: got {len(vec)}, expected {dim}")
     # pack as little-endian float32
     return struct.pack("<" + "f" * dim, *[float(x) for x in vec])
+
+
+def l2_normalize(vec: List[float]) -> List[float]:
+    """Return a unit-length copy of `vec` (or zeros when norm is tiny)."""
+    if not vec:
+        return []
+    norm_sq = 0.0
+    for x in vec:
+        fx = float(x)
+        norm_sq += fx * fx
+    norm = math.sqrt(norm_sq)
+    if norm <= 1e-12:
+        return [0.0 for _ in vec]
+    inv = 1.0 / norm
+    return [float(x) * inv for x in vec]

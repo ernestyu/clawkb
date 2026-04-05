@@ -52,8 +52,20 @@ usage: clawsqlite knowledge build-interest-clusters [-h] [--root ROOT]
                                                     [--tokenizer-ext TOKENIZER_EXT]
                                                     [--vec-ext VEC_EXT]
                                                     [--json] [--verbose]
+                                                    [--algo {kmeans++,hierarchical}]
+                                                    [--tag-weight TAG_WEIGHT]
+                                                    [--use-pca] [--no-pca]
+                                                    [--pca-explained-variance-threshold PCA_EXPLAINED_VARIANCE_THRESHOLD]
                                                     [--min-size MIN_SIZE]
                                                     [--max-clusters MAX_CLUSTERS]
+                                                    [--kmeans-random-state KMEANS_RANDOM_STATE]
+                                                    [--kmeans-n-init KMEANS_N_INIT]
+                                                    [--kmeans-max-iter KMEANS_MAX_ITER]
+                                                    [--enable-post-merge]
+                                                    [--disable-post-merge]
+                                                    [--merge-distance-threshold MERGE_DISTANCE_THRESHOLD]
+                                                    [--hierarchical-distance-threshold HIERARCHICAL_DISTANCE_THRESHOLD]
+                                                    [--hierarchical-linkage {average,complete}]
 
 options:
   -h, --help            show this help message and exit
@@ -72,9 +84,33 @@ options:
                         $CLAWSQLITE_VEC_EXT
   --json                Output JSON
   --verbose             Verbose logging
-  --min-size MIN_SIZE   Minimum cluster size (articles per cluster)
+  --algo {kmeans++,hierarchical}
+                        Clustering backend (default from env or kmeans++)
+  --tag-weight TAG_WEIGHT
+                        Weight of tag_vec in interest-vector mix, range [0,1]
+  --use-pca             Enable PCA before clustering
+  --no-pca              Disable PCA and cluster in original vector space
+  --pca-explained-variance-threshold PCA_EXPLAINED_VARIANCE_THRESHOLD
+                        PCA cumulative explained variance threshold (e.g.
+                        0.90, 0.95)
+  --min-size, --min-cluster-size MIN_SIZE
+                        Minimum cluster size
   --max-clusters MAX_CLUSTERS
-                        Maximum number of clusters to keep
+                        Maximum initial clusters (kmeans++)
+  --kmeans-random-state KMEANS_RANDOM_STATE
+                        Random seed for kmeans++
+  --kmeans-n-init KMEANS_N_INIT
+                        Number of kmeans++ restarts
+  --kmeans-max-iter KMEANS_MAX_ITER
+                        Max iterations per kmeans++ run
+  --enable-post-merge   Enable post-merge of close clusters (kmeans++)
+  --disable-post-merge  Disable post-merge of close clusters (kmeans++)
+  --merge-distance-threshold MERGE_DISTANCE_THRESHOLD
+                        Post-merge cosine-distance threshold (kmeans++)
+  --hierarchical-distance-threshold HIERARCHICAL_DISTANCE_THRESHOLD
+                        Distance threshold used to cut hierarchical tree
+  --hierarchical-linkage {average,complete}
+                        Hierarchical linkage strategy
 
 ## clawsqlite knowledge inspect-interest-clusters --help
 usage: clawsqlite knowledge inspect-interest-clusters [-h] [--root ROOT]

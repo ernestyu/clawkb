@@ -485,6 +485,14 @@ def upsert_tag_vec(conn: sqlite3.Connection, article_id: int, embedding_blob: by
 def delete_vec(conn: sqlite3.Connection, article_id: int) -> None:
     conn.execute("DELETE FROM articles_vec WHERE id=?", (article_id,))
 
+
+def delete_tag_vec(conn: sqlite3.Connection, article_id: int) -> None:
+    try:
+        conn.execute("DELETE FROM articles_tag_vec WHERE id=?", (article_id,))
+    except Exception:
+        # Tag vec table may not exist in older DBs.
+        pass
+
 def rebuild_fts(conn: sqlite3.Connection, include_deleted: bool = False) -> None:
     conn.execute("DELETE FROM articles_fts")
     if fts_jieba_enabled(conn):

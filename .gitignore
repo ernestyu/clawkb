@@ -29,7 +29,9 @@ dist/
 Thumbs.db
 
 # User Data
-knowledge_data/
+docs/ 
+examples/ 
+reports/
 
 # Local temp / tooling
 .tmp_tests/

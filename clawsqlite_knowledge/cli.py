@@ -3,7 +3,7 @@
 Knowledge CLI entrypoint (clawsqlite_knowledge).
 
 Implements:
-- ingest / reindex / search / show / update / delete / export
+- ingest / reindex / search / show / update / delete / export / doctor
 
 Note on CLI ergonomics:
 - Common flags (--db/--root/--articles-dir/--json/--verbose/...) are accepted BOTH before and after the subcommand.
@@ -473,6 +473,11 @@ def cmd_export(args) -> int:
     finally:
         if conn is not None:
             conn.close()
+
+def cmd_doctor(args) -> int:
+    from .doctor import run_doctor
+
+    return run_doctor()
 
 def cmd_search(args) -> int:
     paths = _resolve_paths(args)
@@ -1213,6 +1218,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--scrape-cmd", default=None, help="Scraper command for URL ingest. Or env CLAWSQLITE_SCRAPE_CMD")
     sp.add_argument("--update-existing", action="store_true", help="If URL exists, refresh that record instead of inserting a new one")
     sp.set_defaults(func=cmd_ingest)
+
+    # doctor
+    sp = sub.add_parser("doctor", help="Self-check knowledge DB/env, output JSON report")
+    _add_common_flags(sp)
+    sp.set_defaults(func=cmd_doctor)
 
     # search
     sp = sub.add_parser("search", help="Search the KB (fts/vec/hybrid)")
